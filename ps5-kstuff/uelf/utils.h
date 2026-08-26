@@ -22,6 +22,12 @@ int copy_u64_from_kernel(uint64_t* dst, uint64_t src);
 int copy_u16_to_kernel(uint64_t dst, uint16_t value);
 int copy_u32_to_kernel(uint64_t dst, uint32_t value);
 int copy_u64_to_kernel(uint64_t dst, uint64_t value);
+int copy_from_trap_frame_cached(void* dst, size_t size);
+int copy_to_trap_frame_cached(const void* src, size_t size);
+int copy_from_just_return_cached(void* dst, uint64_t just_return, size_t size);
+int copy_current_thread_from_pcpu_cached(uint64_t* td);
+int copy_rsp0_from_tss_cached(uint64_t* rsp0);
+int copy_to_wrmsr_args_cached(const uint64_t args[3]);
 int run_gadget_checked(uint64_t* regs);
 int read_dbgregs_checked(uint64_t* dr);
 int write_dbgregs_checked(const uint64_t* dr);
@@ -124,7 +130,7 @@ static inline int get_thread_pcb_checked(uint64_t td, uint64_t* pcb)
 static inline int get_current_pcb_checked(uint64_t* pcb)
 {
     uint64_t td;
-    if(kpeek64_checked((uint64_t)pcpu, &td))
+    if(copy_current_thread_from_pcpu_cached(&td))
         return 1;
     return get_thread_pcb_checked(td, pcb);
 }

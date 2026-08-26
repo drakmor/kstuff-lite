@@ -44,7 +44,8 @@ static int copy_to_kernel_raw(uint64_t dst, const void* src, uint64_t sz)
     return 0;
 }
 
-int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit)
+__attribute__((noinline)) int virt2phys(uint64_t addr, uint64_t* phys,
+                                       uint64_t* phys_limit)
 {
     METRIC_TIME_START(start_cycles);
     METRIC_INC(virt2phys_calls);
@@ -85,28 +86,8 @@ int virt2phys(uint64_t addr, uint64_t* phys, uint64_t* phys_limit)
 int copy_from_kernel(void* dst, uint64_t src, uint64_t sz)
 {
     METRIC_TIME_START(start_cycles);
-    uint64_t total = sz;
     METRIC_INC(copy_from_calls);
-    METRIC_ADD(copy_from_bytes, total);
-    if(!sz)
-    {
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
-        return 0;
-    }
-    uint64_t phys, phys_end;
-    if(!virt2phys(src, &phys, &phys_end))
-    {
-        METRIC_INC(copy_from_failures);
-        log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
-        return EFAULT;
-    }
-    if(phys_end - phys >= sz)
-    {
-        memcpy(dst, DMEM + phys, sz);
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
-        return 0;
-    }
+    METRIC_ADD(copy_from_bytes, sz);
     if(copy_from_kernel_raw(dst, src, sz))
     {
         METRIC_INC(copy_from_failures);
@@ -121,28 +102,8 @@ int copy_from_kernel(void* dst, uint64_t src, uint64_t sz)
 int copy_to_kernel(uint64_t dst, const void* src, uint64_t sz)
 {
     METRIC_TIME_START(start_cycles);
-    uint64_t total = sz;
     METRIC_INC(copy_to_calls);
-    METRIC_ADD(copy_to_bytes, total);
-    if(!sz)
-    {
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
-        return 0;
-    }
-    uint64_t phys, phys_end;
-    if(!virt2phys(dst, &phys, &phys_end))
-    {
-        METRIC_INC(copy_to_failures);
-        log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
-        return EFAULT;
-    }
-    if(phys_end - phys >= sz)
-    {
-        memcpy(DMEM + phys, src, sz);
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
-        return 0;
-    }
+    METRIC_ADD(copy_to_bytes, sz);
     if(copy_to_kernel_raw(dst, src, sz))
     {
         METRIC_INC(copy_to_failures);
@@ -168,7 +129,7 @@ int copy_u16_from_kernel(uint16_t* dst, uint64_t src)
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(*dst))
-        memcpy(dst, DMEM + phys, sizeof(*dst));
+        __builtin_memcpy(dst, DMEM + phys, sizeof(*dst));
     else if(copy_from_kernel_raw(dst, src, sizeof(*dst)))
     {
         METRIC_INC(copy_from_failures);
@@ -194,7 +155,7 @@ int copy_u32_from_kernel(uint32_t* dst, uint64_t src)
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(*dst))
-        memcpy(dst, DMEM + phys, sizeof(*dst));
+        __builtin_memcpy(dst, DMEM + phys, sizeof(*dst));
     else if(copy_from_kernel_raw(dst, src, sizeof(*dst)))
     {
         METRIC_INC(copy_from_failures);
@@ -220,7 +181,7 @@ int copy_u64_from_kernel(uint64_t* dst, uint64_t src)
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(*dst))
-        memcpy(dst, DMEM + phys, sizeof(*dst));
+        __builtin_memcpy(dst, DMEM + phys, sizeof(*dst));
     else if(copy_from_kernel_raw(dst, src, sizeof(*dst)))
     {
         METRIC_INC(copy_from_failures);
@@ -246,7 +207,7 @@ int copy_u16_to_kernel(uint64_t dst, uint16_t value)
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(value))
-        memcpy(DMEM + phys, &value, sizeof(value));
+        __builtin_memcpy(DMEM + phys, &value, sizeof(value));
     else if(copy_to_kernel_raw(dst, &value, sizeof(value)))
     {
         METRIC_INC(copy_to_failures);
@@ -272,7 +233,7 @@ int copy_u32_to_kernel(uint64_t dst, uint32_t value)
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(value))
-        memcpy(DMEM + phys, &value, sizeof(value));
+        __builtin_memcpy(DMEM + phys, &value, sizeof(value));
     else if(copy_to_kernel_raw(dst, &value, sizeof(value)))
     {
         METRIC_INC(copy_to_failures);
@@ -298,7 +259,7 @@ int copy_u64_to_kernel(uint64_t dst, uint64_t value)
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(value))
-        memcpy(DMEM + phys, &value, sizeof(value));
+        __builtin_memcpy(DMEM + phys, &value, sizeof(value));
     else if(copy_to_kernel_raw(dst, &value, sizeof(value)))
     {
         METRIC_INC(copy_to_failures);
@@ -312,15 +273,165 @@ int copy_u64_to_kernel(uint64_t dst, uint64_t value)
 
 uint64_t yield(void);
 
-int run_gadget_checked(uint64_t* regs)
+struct kernel_mapping_cache
 {
-    if(copy_to_kernel(trap_frame, regs, NREGS*8))
+    uint64_t physical_address;
+    int valid;
+};
+
+static struct kernel_mapping_cache s_trap_frame_mapping;
+static struct kernel_mapping_cache s_just_return_mapping;
+static struct kernel_mapping_cache s_pcpu_mapping;
+static struct kernel_mapping_cache s_tss_rsp0_mapping;
+static struct kernel_mapping_cache s_wrmsr_args_mapping;
+
+extern char tss[];
+extern uint64_t wrmsr_args;
+
+/* These addresses belong to the per-CPU KELF and stay fixed for its lifetime. */
+static __attribute__((noinline)) int initialize_kernel_mapping_cache(
+    struct kernel_mapping_cache* cache, uint64_t address, uint64_t size,
+    uint64_t* physical_address)
+{
+    uint64_t physical_limit;
+    if(!virt2phys(address, physical_address, &physical_limit))
+        return 0;
+    if(*physical_address > physical_limit
+    || size > physical_limit - *physical_address)
+        return 0;
+
+    cache->physical_address = *physical_address;
+    __atomic_store_n(&cache->valid, 1, __ATOMIC_RELEASE);
+    return 1;
+}
+
+static int get_cached_physical_address(struct kernel_mapping_cache* cache,
+                                       uint64_t address, uint64_t size,
+                                       uint64_t* physical_address)
+{
+    if(__atomic_load_n(&cache->valid, __ATOMIC_ACQUIRE))
+    {
+        *physical_address = cache->physical_address;
+        return 1;
+    }
+    return initialize_kernel_mapping_cache(cache, address, size,
+                                           physical_address);
+}
+
+static __attribute__((noinline, cold)) int copy_from_kernel_uncached(
+    void* dst, uint64_t src, uint64_t size)
+{
+    return copy_from_kernel(dst, src, size);
+}
+
+static __attribute__((noinline, cold)) int copy_to_kernel_uncached(
+    uint64_t dst, const void* src, uint64_t size)
+{
+    return copy_to_kernel(dst, src, size);
+}
+
+static __attribute__((noinline)) int copy_from_cached_kernel_mapping(
+    struct kernel_mapping_cache* cache, void* dst, uint64_t src,
+    uint64_t mapping_size, uint64_t size)
+{
+    METRIC_TIME_START(start_cycles);
+    uint64_t physical_address;
+    if(size > mapping_size
+    || !get_cached_physical_address(cache, src, mapping_size, &physical_address))
+        return copy_from_kernel_uncached(dst, src, size);
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, size);
+    memcpy(dst, DMEM + physical_address, size);
+    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    return 0;
+}
+
+static __attribute__((noinline)) int copy_to_cached_kernel_mapping(
+    struct kernel_mapping_cache* cache, uint64_t dst, const void* src,
+    uint64_t mapping_size, uint64_t size)
+{
+    METRIC_TIME_START(start_cycles);
+    uint64_t physical_address;
+    if(size > mapping_size
+    || !get_cached_physical_address(cache, dst, mapping_size, &physical_address))
+        return copy_to_kernel_uncached(dst, src, size);
+    METRIC_INC(copy_to_calls);
+    METRIC_ADD(copy_to_bytes, size);
+    memcpy(DMEM + physical_address, src, size);
+    METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+    return 0;
+}
+
+static __attribute__((noinline)) int copy_u64_from_cached_kernel_mapping(
+    struct kernel_mapping_cache* cache, uint64_t src, uint64_t* value)
+{
+    METRIC_TIME_START(start_cycles);
+    uint64_t physical_address;
+    if(!get_cached_physical_address(cache, src, sizeof(*value),
+                                    &physical_address))
+        return copy_u64_from_kernel(value, src);
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, sizeof(*value));
+    __builtin_memcpy(value, DMEM + physical_address, sizeof(*value));
+    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    return 0;
+}
+
+enum {
+    TRAP_FRAME_MAPPING_SIZE = (NREGS + 1) * sizeof(uint64_t),
+    JUST_RETURN_MAPPING_SIZE = 5 * sizeof(uint64_t),
+};
+
+__attribute__((noinline)) int copy_from_trap_frame_cached(void* dst, size_t size)
+{
+    return copy_from_cached_kernel_mapping(&s_trap_frame_mapping, dst,
+                                           trap_frame, TRAP_FRAME_MAPPING_SIZE,
+                                           size);
+}
+
+__attribute__((noinline)) int copy_to_trap_frame_cached(const void* src, size_t size)
+{
+    return copy_to_cached_kernel_mapping(&s_trap_frame_mapping, trap_frame,
+                                         src, TRAP_FRAME_MAPPING_SIZE, size);
+}
+
+__attribute__((noinline)) int copy_from_just_return_cached(void* dst,
+                                                          uint64_t just_return,
+                                                          size_t size)
+{
+    return copy_from_cached_kernel_mapping(&s_just_return_mapping, dst,
+                                           just_return, JUST_RETURN_MAPPING_SIZE,
+                                           size);
+}
+
+__attribute__((noinline)) int copy_current_thread_from_pcpu_cached(uint64_t* td)
+{
+    return copy_u64_from_cached_kernel_mapping(&s_pcpu_mapping,
+                                               (uint64_t)pcpu, td);
+}
+
+__attribute__((noinline)) int copy_rsp0_from_tss_cached(uint64_t* rsp0)
+{
+    return copy_u64_from_cached_kernel_mapping(&s_tss_rsp0_mapping,
+                                               (uint64_t)tss + 4, rsp0);
+}
+
+__attribute__((noinline)) int copy_to_wrmsr_args_cached(const uint64_t args[3])
+{
+    return copy_to_cached_kernel_mapping(&s_wrmsr_args_mapping, wrmsr_args,
+                                         args, 3 * sizeof(*args),
+                                         3 * sizeof(*args));
+}
+
+__attribute__((noinline)) int run_gadget_checked(uint64_t* regs)
+{
+    if(copy_to_trap_frame_cached(regs, NREGS*8))
         return EFAULT;
     uint64_t just_return = yield();
     uint64_t jr_frame[5];
-    if(copy_from_kernel(regs, trap_frame, NREGS*8))
+    if(copy_from_trap_frame_cached(regs, NREGS*8))
         return EFAULT;
-    if(copy_from_kernel(jr_frame, just_return, 40))
+    if(copy_from_just_return_cached(jr_frame, just_return, sizeof(jr_frame)))
         return EFAULT;
     regs[RDX] = jr_frame[2];
     regs[RCX] = jr_frame[3];
