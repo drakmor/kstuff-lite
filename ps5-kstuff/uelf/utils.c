@@ -1072,6 +1072,25 @@ int write_cr0_checked(uint64_t cr0)
     return run_gadget_no_result_checked(regs);
 }
 
+/*
+ * uelf_fpu_finish() runs after main() has copied the outer kernel state back
+ * to trap_frame.  A synchronous gadget call at that point replaces the frame
+ * with its own single-step state.  Preserve the completed outer frame around
+ * the legacy CR0 restore so the terminal HLT still returns to the interrupted
+ * kernel path rather than to the CR0 gadget's continuation.
+ */
+static int write_cr0_preserving_trap_frame_checked(uint64_t cr0)
+{
+    uint64_t outer_regs[NREGS];
+    if(copy_from_trap_frame_cached(outer_regs, sizeof(outer_regs)))
+        return EFAULT;
+
+    int result = write_cr0_checked(cr0);
+    if(copy_to_trap_frame_cached(outer_regs, sizeof(outer_regs)))
+        return EFAULT;
+    return result;
+}
+
 int defer_cr0_restore_checked(uint64_t cr0)
 {
     METRIC_INC(cr0_restore_calls);
@@ -1102,7 +1121,7 @@ int defer_cr0_restore_checked(uint64_t cr0)
                     cr0_deferred_arm_cycles_max, arm_start_cycles);
     }
     METRIC_INC(cr0_deferred_restore_fallbacks);
-    RETURN_CR0_RESTORE(write_cr0_checked(cr0));
+    RETURN_CR0_RESTORE(write_cr0_preserving_trap_frame_checked(cr0));
 #undef RETURN_CR0_RESTORE
 }
 
