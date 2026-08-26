@@ -18,6 +18,7 @@ extern uint64_t kdata_base;
 #include "offsets/4_00.h"
 #include "offsets/4_02.h"
 #include "offsets/4_03.h"
+#include "offsets/2_50.h"
 #include "offsets/4_50.h"
 #include "offsets/4_51.h"
 #include "offsets/5_00.h"
@@ -66,6 +67,7 @@ int set_offsets(void)
     switch(ver)
     {
 #ifndef NO_BUILTIN_OFFSETS
+    case 0x250: set_offsets_250(); break;
     case 0x300: set_offsets_300(); break;
     case 0x310: set_offsets_310(); break;
     case 0x320: set_offsets_320(); break;

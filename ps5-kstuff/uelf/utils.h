@@ -122,6 +122,14 @@ static inline uint64_t get_pcb_field_ptr(uint64_t pcb, uint64_t field_offset)
     return pcb + field_offset + (FWVER >= 0x1000 ? 0x10 : 0);
 }
 
+static inline uint64_t get_pcb_flags_ptr(uint64_t pcb)
+{
+    /* 2.50 uses the older PCB layout; pcb_flags moved to 0x100 in 3.00+. */
+    if(FWVER == 0x250)
+        return pcb + pcb_flags_250;
+    return get_pcb_field_ptr(pcb, pcb_flags);
+}
+
 static inline int get_thread_pcb_checked(uint64_t td, uint64_t* pcb)
 {
     return kpeek64_checked(td + td_pcb, pcb);
@@ -140,7 +148,7 @@ static inline int get_current_pcb_flags_ptr_checked(uint64_t* p_pcb_flags)
     uint64_t pcb;
     if(get_current_pcb_checked(&pcb))
         return 1;
-    *p_pcb_flags = get_pcb_field_ptr(pcb, pcb_flags);
+    *p_pcb_flags = get_pcb_flags_ptr(pcb);
     return 0;
 }
 

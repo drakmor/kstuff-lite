@@ -513,6 +513,7 @@ struct shellcore_patch
     size_t sz;
 };
 
+#include "shellcore_patches/2_50.h"
 #include "shellcore_patches/3_00.h"
 #include "shellcore_patches/3_10.h"
 #include "shellcore_patches/3_20.h"
@@ -661,6 +662,7 @@ enum kit_type kit = get_kit_type();
     struct shellcore_patch* patches;
     switch(ver)
     {
+    FW(250);
     FW(300);
     FW(310);
     FW(320);

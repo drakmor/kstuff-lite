@@ -1626,6 +1626,14 @@ int r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     victim_fd = b;
     victim_pktopts = c;
     kdata_base = d;
+    /*
+     * The 2.50 elfldr ABI reports the SDK data anchor, while the 2.50
+     * prosper0gdb table was produced relative to the kernel image's older
+     * kdata anchor.  They differ by 0x1010000.  Firmware 3.00+ uses the same
+     * anchor on both sides.
+     */
+    if((r0gdb_get_fw_version() >> 16) == 0x250)
+        kdata_base -= 0x1010000;
     if(!set_offsets())
     {
         r0gdb_init_with_offsets();
