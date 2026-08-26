@@ -884,6 +884,21 @@ static uint64_t get_cr0_write_ret(uint64_t fwver)
     }
 }
 
+/* Scalar KELF writer: mov [rdi], rax; [pop rbp;] ret. */
+static uint64_t get_store_rax_rdi(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    /*
+     * 13.60 no longer has the writer at cpu_switch-0x1ee.  Verified in the
+     * executable kernel image at IDA 0xffffffff80cdbb5e, with KDATA based at
+     * 0xffffffff819a0000 (bytes: 48 89 07 5d c3).
+     */
+    case 0x1360: return kdata_base - 0xcc44a2;
+    default: return offsets.cpu_switch - 0x1ee;
+    }
+}
+
 #define USE_INT3_SYSCALL_HOOK 1
 #define INT13_IST_INDEX 3
 #define INT1_IST_INDEX 4
@@ -1024,9 +1039,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     };
 	
     uint64_t fwver = r0gdb_get_fw_version() >> 16;
-    // Keep this selection separate: newer firmware may move the store and add
-    // a pop rbp epilogue, which kelf's continuation slot also accepts.
-    uint64_t store_rax_rdi = offsets.cpu_switch - 0x1ee;
+    uint64_t store_rax_rdi = get_store_rax_rdi(fwver);
     uint64_t values[] = {
         comparison_table,      // comparison_table
         dmem_virt_base,        // dmem
