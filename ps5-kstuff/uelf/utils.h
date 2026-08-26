@@ -32,6 +32,7 @@ int run_gadget_checked(uint64_t* regs);
 int read_dbgregs_checked(uint64_t* dr);
 int write_dbgregs_checked(const uint64_t* dr);
 int read_cr0_checked(uint64_t* cr0);
+int read_cr0_clear_ts_checked(uint64_t* cr0);
 int write_cr0_checked(uint64_t cr0);
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs);
 void handle_utils_trap(uint64_t* regs, uint32_t trapno);

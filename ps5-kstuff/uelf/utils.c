@@ -478,7 +478,16 @@ __attribute__((noinline)) int copy_to_wrmsr_args_cached(const uint64_t args[3])
                                          3 * sizeof(*args));
 }
 
-__attribute__((noinline)) int run_gadget_checked(uint64_t* regs)
+enum run_gadget_result
+{
+    RUN_GADGET_RESULT_NONE,
+    RUN_GADGET_RESULT_RAX,
+    RUN_GADGET_RESULT_FULL,
+    RUN_GADGET_RESULT_FULL_WITH_TRAP,
+};
+
+static __attribute__((noinline)) int run_gadget_result_checked(
+    uint64_t* regs, enum run_gadget_result result, uint64_t* rax)
 {
     METRIC_INC(run_gadget_calls);
     METRIC_TIME_START(start_cycles);
@@ -492,16 +501,56 @@ __attribute__((noinline)) int run_gadget_checked(uint64_t* regs)
     if(copy_to_trap_frame_cached(regs, NREGS*8))
         RETURN_RUN_GADGET(EFAULT);
     uint64_t just_return = yield();
-    uint64_t jr_frame[5];
-    if(copy_from_trap_frame_cached(regs, NREGS*8))
-        RETURN_RUN_GADGET(EFAULT);
-    if(copy_from_just_return_cached(jr_frame, just_return, sizeof(jr_frame)))
-        RETURN_RUN_GADGET(EFAULT);
-    regs[RDX] = jr_frame[2];
-    regs[RCX] = jr_frame[3];
-    regs[RAX] = jr_frame[4];
+
+    if(result == RUN_GADGET_RESULT_FULL
+    || result == RUN_GADGET_RESULT_FULL_WITH_TRAP)
+    {
+        const size_t regs_size = result == RUN_GADGET_RESULT_FULL_WITH_TRAP
+                               ? (NREGS + 1) * sizeof(*regs)
+                               : NREGS * sizeof(*regs);
+        if(copy_from_trap_frame_cached(regs, regs_size))
+            RETURN_RUN_GADGET(EFAULT);
+    }
+
+    if(result != RUN_GADGET_RESULT_NONE)
+    {
+        uint64_t jr_frame[5];
+        if(copy_from_just_return_cached(jr_frame, just_return,
+                                        sizeof(jr_frame)))
+            RETURN_RUN_GADGET(EFAULT);
+        if(result == RUN_GADGET_RESULT_RAX)
+            *rax = jr_frame[4];
+        else
+        {
+            regs[RDX] = jr_frame[2];
+            regs[RCX] = jr_frame[3];
+            regs[RAX] = jr_frame[4];
+        }
+    }
     RETURN_RUN_GADGET(0);
 #undef RETURN_RUN_GADGET
+}
+
+__attribute__((noinline)) int run_gadget_checked(uint64_t* regs)
+{
+    return run_gadget_result_checked(regs, RUN_GADGET_RESULT_FULL, NULL);
+}
+
+static int run_gadget_capture_rax_checked(uint64_t* regs, uint64_t* rax)
+{
+    return run_gadget_result_checked(regs, RUN_GADGET_RESULT_RAX, rax);
+}
+
+static int run_gadget_no_result_checked(uint64_t* regs)
+{
+    return run_gadget_result_checked(regs, RUN_GADGET_RESULT_NONE, NULL);
+}
+
+static int run_gadget_with_trap_checked(uint64_t* regs)
+{
+    return run_gadget_result_checked(regs,
+                                     RUN_GADGET_RESULT_FULL_WITH_TRAP,
+                                     NULL);
 }
 
 extern char dr2gpr_start[];
@@ -511,6 +560,7 @@ extern char rdmsr_end[];
 extern char wrmsr_ret[];
 extern char mov_rax_cr0[];
 extern char mov_cr0_rax[];
+extern char fpusave_capture[];
 extern char doreti_iret[];
 extern char syscall_after[];
 
@@ -606,9 +656,96 @@ int read_cr0_checked(uint64_t* cr0)
     uint64_t regs[NREGS] = {
         [RIP] = (uint64_t)mov_rax_cr0, 0x20, 0x102, 0, 0,
     };
-    if(run_gadget_checked(regs))
+    if(run_gadget_capture_rax_checked(regs, cr0))
         return EFAULT;
-    *cr0 = regs[RAX];
+    return 0;
+}
+
+/*
+ * Preserve the pre-fpusave_capture path for firmware without a verified
+ * capture offset.  In particular, do not try an offset borrowed from another
+ * firmware: both gadgets below already come from that firmware's normal
+ * prosper0gdb offset set.
+ */
+static int read_cr0_clear_ts_legacy_checked(uint64_t* cr0)
+{
+    if(read_cr0_checked(cr0))
+        return EFAULT;
+    if(!(*cr0 & 8))
+    {
+        METRIC_INC(cr0_ts_already_clear);
+        METRIC_INC(cr0_clear_elided_transitions);
+        return 0;
+    }
+    if(write_cr0_checked(*cr0 & -9))
+        return EFAULT;
+    return 0;
+}
+
+static int fpusave_capture_disabled;
+
+static int is_sane_cr0(uint64_t cr0)
+{
+    const uint64_t known_bits = 0xe005003f;
+    const uint64_t required_bits = 0x80000001;
+    return !(cr0 & ~known_bits)
+        && (cr0 & required_bits) == required_bits;
+}
+
+int read_cr0_clear_ts_checked(uint64_t* cr0)
+{
+    METRIC_INC(cr0_read_clear_calls);
+    if((uint64_t)fpusave_capture <= 0x1000 || fpusave_capture_disabled)
+    {
+        METRIC_INC(cr0_read_clear_fallbacks);
+        return read_cr0_clear_ts_legacy_checked(cr0);
+    }
+
+    METRIC_INC(cr0_read_calls);
+    uint64_t regs[NREGS + 1] = {
+        [RIP] = (uint64_t)fpusave_capture,
+        [CS] = 0x20,
+        [EFLAGS] = 2,
+        [RDI] = 0xdeadbeefdeadbeef,
+    };
+    if(run_gadget_with_trap_checked(regs))
+        return EFAULT;
+
+    /*
+     * The non-canonical destination must raise #GP at the XSAVE or FXSAVE
+     * instruction.  Treating an unrelated trap as success can copy an
+     * arbitrary RCX into saved_cr0 and later write it back to CR0.
+     *
+     * 2.50 uses the older helper layout.  The verified 4.03, 7.61 and 9.40
+     * helpers share the newer FXSAVE offset; XSAVE is at +0x1c in both.
+     */
+    const uint64_t expected_xsave_rip = (uint64_t)fpusave_capture + 0x1c;
+    const uint64_t expected_fxsave_rip = (uint64_t)fpusave_capture
+                                       + (FWVER == 0x250 ? 0x23 : 0x21);
+    if(regs[NREGS] != 13
+    || (regs[RIP] != expected_xsave_rip
+     && regs[RIP] != expected_fxsave_rip)
+    || !is_sane_cr0(regs[RCX]))
+    {
+        /*
+         * MOV RCX,CR0 is the first instruction.  If the unexpected trap is
+         * still inside the helper, RCX contains the original CR0 and CLTS may
+         * already have cleared TS.  Restore it before disabling this path.
+         */
+        const uint64_t capture_rip = (uint64_t)fpusave_capture;
+        if(regs[RIP] >= capture_rip + 3
+        && regs[RIP] < capture_rip + 0x2a
+        && is_sane_cr0(regs[RCX])
+        && (regs[RCX] & 8))
+            (void)write_cr0_checked(regs[RCX]);
+        fpusave_capture_disabled = 1;
+        METRIC_INC(run_gadget_failures);
+        return EFAULT;
+    }
+    *cr0 = regs[RCX];
+    if(!(*cr0 & 8))
+        METRIC_INC(cr0_ts_already_clear);
+    METRIC_INC(cr0_clear_elided_transitions);
     return 0;
 }
 
@@ -619,7 +756,7 @@ int write_cr0_checked(uint64_t cr0)
         [RIP] = (uint64_t)mov_cr0_rax, 0x20, 0x102, 0, 0,
         [RAX] = cr0,
     };
-    return run_gadget_checked(regs);
+    return run_gadget_no_result_checked(regs);
 }
 
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs)

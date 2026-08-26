@@ -765,6 +765,31 @@ uint64_t bench(void)
     return rdtsc() - start;
 }
 
+/*
+ * Entry at "mov rcx, cr0; clts" inside the kernel FPU-save helper.  UELF
+ * supplies a non-canonical destination so the following XSAVE/FXSAVE faults
+ * after RCX has captured CR0 and TS has been cleared.  Unverified firmwares
+ * use the ordinary read/write CR0 helpers instead.
+ *
+ * Signature used for offline/XO porting:
+ *   0f 20 c1 0f 06 83 3d ?? ?? ?? ?? 00
+ *
+ * Value 1 is an explicit unavailable sentinel.  It must remain nonzero
+ * because values[] is zero-terminated; UELF detects it and uses the original
+ * read_cr0_checked() + write_cr0_checked() implementation.
+ */
+static uint64_t get_fpusave_capture(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x4f60c0;
+    case 0x403: return kdata_base - 0x52e24c;
+    case 0x761: return kdata_base - 0x54982c;
+    case 0x940: return kdata_base - 0x56b3cc;
+    default: return 1;
+    }
+}
+
 #define USE_INT3_SYSCALL_HOOK 1
 #define INT13_IST_INDEX 3
 #define INT1_IST_INDEX 4
@@ -890,6 +915,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
         ".fwver"+zero,
+        "fpusave_capture"+zero,
         "store_rax_rdi"+zero,
 #define KDATA_OFFSET(x) (#x)+zero,
 #define ABSOLUTE_OFFSET(x) (#x)+zero,
@@ -918,6 +944,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
         fwver,                 // .fwver
+        get_fpusave_capture(fwver), // fpusave_capture
         store_rax_rdi,
 #define KDATA_OFFSET(x) offsets.x,
 #define ABSOLUTE_OFFSET(x) offsets.x,

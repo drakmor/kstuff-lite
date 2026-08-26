@@ -16,7 +16,7 @@ int uelf_fpu_enter(void)
     }
     METRIC_INC(fpu_enters);
     fpu_state_saved = 0;
-    if(read_cr0_checked(&saved_cr0) || write_cr0_checked(saved_cr0 & -9)) //clear CR0.TS
+    if(read_cr0_clear_ts_checked(&saved_cr0))
     {
         METRIC_INC(fpu_enter_failures);
         fpu_depth = 0;
@@ -40,6 +40,7 @@ void uelf_fpu_exit(void)
     if(!fpu_state_saved)
         return;
     asm volatile("xrstor %0"::"m"(xsave_area),"a"(xsave_eax),"d"(xsave_edx));
-    write_cr0_checked(saved_cr0);
+    if((saved_cr0 & 8) && write_cr0_checked(saved_cr0))
+        METRIC_INC(fpu_exit_failures);
     fpu_state_saved = 0;
 }

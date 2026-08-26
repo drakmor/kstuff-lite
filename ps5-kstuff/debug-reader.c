@@ -147,6 +147,10 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("dr_chain", metrics->dbg_write_chain_calls);
     PRINT_FIELD("cr0_read", metrics->cr0_read_calls);
     PRINT_FIELD("cr0_write", metrics->cr0_write_calls);
+    PRINT_FIELD("cr0_read_clear", metrics->cr0_read_clear_calls);
+    PRINT_FIELD("cr0_rc_fallback", metrics->cr0_read_clear_fallbacks);
+    PRINT_FIELD("cr0_elided", metrics->cr0_clear_elided_transitions);
+    PRINT_FIELD("cr0_ts_clear", metrics->cr0_ts_already_clear);
     PRINT_FIELD("msr_read", metrics->msr_read_calls);
     PRINT_FIELD("msr_write", metrics->msr_write_calls);
     tee_putc('\n');
@@ -308,6 +312,7 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("fpu", metrics->fpu_enters);
     PRINT_FIELD("fpu_nested", metrics->fpu_nested_enters);
     PRINT_FIELD("fpu_fail", metrics->fpu_enter_failures);
+    PRINT_FIELD("fpu_exit_fail", metrics->fpu_exit_failures);
     tee_putc('\n');
 
     tee_printf("fpkg");
