@@ -138,6 +138,17 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("trap_write_fail", metrics->uelf_main_trap_write_failures);
     PRINT_FIELD("gadget", metrics->run_gadget_calls);
     PRINT_FIELD("gadget_fail", metrics->run_gadget_failures);
+    PRINT_FIELD("gadget_elided", metrics->dbg_write_elided_gadgets);
+    tee_putc('\n');
+
+    tee_printf("kernel_ops");
+    PRINT_FIELD("dr_read", metrics->dbg_read_calls);
+    PRINT_FIELD("dr_write", metrics->dbg_write_calls);
+    PRINT_FIELD("dr_chain", metrics->dbg_write_chain_calls);
+    PRINT_FIELD("cr0_read", metrics->cr0_read_calls);
+    PRINT_FIELD("cr0_write", metrics->cr0_write_calls);
+    PRINT_FIELD("msr_read", metrics->msr_read_calls);
+    PRINT_FIELD("msr_write", metrics->msr_write_calls);
     tee_putc('\n');
 
     tee_printf("decrypt_regs");

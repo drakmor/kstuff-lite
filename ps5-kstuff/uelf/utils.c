@@ -505,8 +505,7 @@ __attribute__((noinline)) int run_gadget_checked(uint64_t* regs)
 }
 
 extern char dr2gpr_start[];
-extern char gpr2dr_1_start[];
-extern char gpr2dr_2_start[];
+extern char cpu_switch[];
 extern char rdmsr_start[];
 extern char rdmsr_end[];
 extern char wrmsr_ret[];
@@ -517,6 +516,7 @@ extern char syscall_after[];
 
 int read_dbgregs_checked(uint64_t* dr)
 {
+    METRIC_INC(dbg_read_calls);
     uint64_t regs[NREGS] = { [RIP] = (uint64_t)dr2gpr_start, 0x20, 2, 0, 0, [R8] = 0xdeadbeefdeadbeef };
     if(run_gadget_checked(regs))
         return EFAULT;
@@ -531,25 +531,49 @@ int read_dbgregs_checked(uint64_t* dr)
 
 int write_dbgregs_checked(const uint64_t* dr)
 {
-    uint64_t regs[NREGS] = { [RIP] = (uint64_t)gpr2dr_1_start, 0x20, 2, 0, 0, [R8] = 0xdeadbeefdeadbeef };
-    regs[R15] = dr[0];
-    regs[R14] = dr[1];
-    regs[R13] = dr[2];
-    regs[RBX] = dr[3];
-    regs[R11] = dr[4];
-    regs[RCX] = dr[5];
-    regs[RAX] = dr[5];
-    if(run_gadget_checked(regs))
-        return EFAULT;
-    regs[R11] = dr[4];
-    regs[R15] = dr[5];
-    regs[R12] = 0xdeadbeefdeadbeef;
-    regs[RIP] = (uint64_t)gpr2dr_2_start;
+    enum
+    {
+        CPU_SWITCH_DR0 = 0x78 / sizeof(uint64_t),
+        CPU_SWITCH_DR1 = 0x80 / sizeof(uint64_t),
+        CPU_SWITCH_DR2 = 0x88 / sizeof(uint64_t),
+        CPU_SWITCH_DR3 = 0x90 / sizeof(uint64_t),
+        CPU_SWITCH_DR6 = 0x98 / sizeof(uint64_t),
+        CPU_SWITCH_DR7 = 0xa0 / sizeof(uint64_t),
+        CPU_SWITCH_RETURN_SLOT = 0xa8 / sizeof(uint64_t),
+    };
+    _Static_assert(CPU_SWITCH_RETURN_SLOT < RIP,
+                   "cpu_switch scratch overlaps the iret frame");
+
+    METRIC_INC(dbg_write_calls);
+    METRIC_INC(dbg_write_chain_calls);
+    METRIC_INC(dbg_write_elided_gadgets);
+
+    /*
+     * This is the common cpu_switch tail which restores all six debug
+     * registers from pcb offsets 0x78..0xa0.  2.50 has the older function
+     * layout; every supported 3.00+ offset table has the newer layout.
+     */
+    const uint64_t tail_delta = FWVER == 0x250 ? 0x704 : 0x874;
+    uint64_t regs[NREGS] = {
+        [RIP] = (uint64_t)cpu_switch + tail_delta,
+        [CS] = 0x20,
+        [EFLAGS] = 2,
+    };
+    regs[RDI] = trap_frame;
+    regs[R9] = trap_frame + CPU_SWITCH_RETURN_SLOT * sizeof(uint64_t);
+    regs[RBX] = 0xdeadbeefdeadbeef;
+    regs[CPU_SWITCH_DR0] = dr[0];
+    regs[CPU_SWITCH_DR1] = dr[1];
+    regs[CPU_SWITCH_DR2] = dr[2];
+    regs[CPU_SWITCH_DR3] = dr[3];
+    regs[CPU_SWITCH_DR6] = dr[4];
+    regs[CPU_SWITCH_DR7] = dr[5];
     return run_gadget_checked(regs);
 }
 
 int rdmsr(uint32_t which, uint64_t* ans)
 {
+    METRIC_INC(msr_read_calls);
     uint64_t regs[NREGS] = {
         [RIP] = (uint64_t)rdmsr_start, 0x20, 0x102, 0, 0,
         [RCX] = which,
@@ -564,6 +588,7 @@ int rdmsr(uint32_t which, uint64_t* ans)
 
 int wrmsr(uint32_t which, uint64_t value)
 {
+    METRIC_INC(msr_write_calls);
     uint64_t regs[NREGS] = {
         [RIP] = (uint64_t)wrmsr_ret, 0x20, 0x102, 0, 0,
         [RCX] = which,
@@ -577,6 +602,7 @@ int wrmsr(uint32_t which, uint64_t value)
 
 int read_cr0_checked(uint64_t* cr0)
 {
+    METRIC_INC(cr0_read_calls);
     uint64_t regs[NREGS] = {
         [RIP] = (uint64_t)mov_rax_cr0, 0x20, 0x102, 0, 0,
     };
@@ -588,6 +614,7 @@ int read_cr0_checked(uint64_t* cr0)
 
 int write_cr0_checked(uint64_t cr0)
 {
+    METRIC_INC(cr0_write_calls);
     uint64_t regs[NREGS] = {
         [RIP] = (uint64_t)mov_cr0_rax, 0x20, 0x102, 0, 0,
         [RAX] = cr0,
