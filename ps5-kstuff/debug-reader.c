@@ -261,6 +261,20 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("cr0_exit_max", metrics->cr0_restore_cycles_max);
     tee_putc('\n');
 
+    tee_printf("fpu_state_cycles");
+    PRINT_FIELD("xcr0_init", metrics->fpu_xcr0_initializations);
+    PRINT_FIELD("xsave", metrics->fpu_xsave_calls);
+    PRINT_FIELD("xsavec", metrics->fpu_xsavec_calls);
+    PRINT_FIELD("save_avg", metrics->fpu_xsave_calls
+                              + metrics->fpu_xsavec_calls
+        ? metrics->fpu_xsave_cycles_total
+            / (metrics->fpu_xsave_calls + metrics->fpu_xsavec_calls) : 0);
+    PRINT_FIELD("save_max", metrics->fpu_xsave_cycles_max);
+    PRINT_FIELD("restore_avg", metrics->fpu_exits
+        ? metrics->fpu_xrstor_cycles_total / metrics->fpu_exits : 0);
+    PRINT_FIELD("restore_max", metrics->fpu_xrstor_cycles_max);
+    tee_putc('\n');
+
     tee_printf("fself_cache");
     PRINT_FIELD("hdr_hit", metrics->fself_header_cache_hits);
     PRINT_FIELD("hdr_miss", metrics->fself_header_cache_misses);
