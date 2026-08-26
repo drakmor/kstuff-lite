@@ -288,6 +288,8 @@ struct kstuff_metrics
     uint64_t cr0_chain_failures;
     uint64_t cr0_restore_calls;
     uint64_t cr0_deferred_restore_fallbacks;
+    uint64_t cr0_fast_enter_arms;
+    uint64_t cr0_fast_enter_fallbacks;
     uint64_t fpu_exits;
 
     /* End-to-end and CR0-only FPU transition timings (TSC cycles). */
@@ -377,14 +379,14 @@ extern struct shared_area_layout shared_area;
 #define METRIC_MAX(field, value) do { } while(0)
 #endif
 
-_Static_assert(sizeof(struct kstuff_metrics) == 2024, "unexpected metrics size");
+_Static_assert(sizeof(struct kstuff_metrics) == 2040, "unexpected metrics size");
 _Static_assert(sizeof(struct kstuff_word_log) == 264, "unexpected word log size");
 _Static_assert(sizeof(struct kstuff_ioctl_com_entry) == 24, "unexpected ioctl com entry size");
 _Static_assert(sizeof(struct kstuff_ioctl_com_table) == 3088, "unexpected ioctl com table size");
 _Static_assert(sizeof(struct kstuff_msg_log) == 504, "unexpected message log size");
-_Static_assert(sizeof(struct kstuff_snapshot) == 5896, "unexpected snapshot size");
+_Static_assert(sizeof(struct kstuff_snapshot) == 5912, "unexpected snapshot size");
 #if KSTUFF_OBS
-_Static_assert(sizeof(struct shared_area_layout) == 7928, "unexpected shared_area size");
+_Static_assert(sizeof(struct shared_area_layout) == 7944, "unexpected shared_area size");
 #else
 _Static_assert(sizeof(struct shared_area_layout) == 2048, "unexpected non-OBS shared_area size");
 #endif

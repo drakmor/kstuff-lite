@@ -22,11 +22,13 @@
 %define fpu_cr0_enter_stack_offset 512
 %define fpu_cr0_exit_stack_offset 1024
 %define fpu_cr0_exit_hook_ptr_offset 320
+%define fpu_cr0_enter_hook_ptr_offset 328
 %define fpu_cr0_scratch_offset 2048
 %define fpu_cr0_cleared_offset (fpu_cr0_scratch_offset+8)
 %define fpu_cr0_saved_offset (fpu_cr0_scratch_offset+0x58)
 %define fpu_cr0_deferred_offset (fpu_cr0_scratch_offset+0x60)
 %define trap_frame_extended_size (fpu_cr0_deferred_offset+8)
+%define fpu_cr0_fast_enter_stack_offset 3072
 
 %define td_proc 8
 %define td_pcb 0x3f8
