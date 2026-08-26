@@ -14,6 +14,7 @@ extern nop_ret
 extern pop_all_iret
 extern push_pop_all_iret
 extern rep_movsb_pop_rbp_ret
+extern store_rax_rdi
 extern uelf_cr3
 extern uelf_entry
 extern ist_errc
@@ -64,21 +65,20 @@ dq (%2) ; data to be copied, also popped into rbp
 ; pokeq where, value
 %macro pokeq 2
 dq pop_all_iret
-; set argument
+; Load the destination and value, then use the firmware-selected scalar store.
+; The continuation slot supports both "ret" and "pop rbp; ret" epilogues.
 times iret_rdi db 0
 dq (%1)
-times iret_rsi-iret_rdi-8 db 0
-dq %%stack_after
-times iret_rcx-iret_rsi-8 db 0
-dq 8
-times iret_rip-iret_rcx-8 db 0
-dq rep_movsb_pop_rbp_ret
+times iret_rax-iret_rdi-8 db 0
+dq (%2)
+times iret_rip-iret_rax-8 db 0
+dq store_rax_rdi ; mov [rdi], rax; [pop rbp;] ret
 dq 0x20
 dq 2
 dq %%stack_after
 dq 0
 %%stack_after:
-dq (%2) ; data to be copied, also popped into rbp
+dq nop_ret ; executed by ret, or consumed as rbp by pop rbp; ret
 %endmacro
 
 ; cmpb ptr1, ptr2, is_less, is_equal, is_greater

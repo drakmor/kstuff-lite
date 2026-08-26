@@ -890,6 +890,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
         ".fwver"+zero,
+        "store_rax_rdi"+zero,
 #define KDATA_OFFSET(x) (#x)+zero,
 #define ABSOLUTE_OFFSET(x) (#x)+zero,
 #include "../prosper0gdb/offsets/offset_list.txt"
@@ -899,6 +900,9 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     };
 	
     uint64_t fwver = r0gdb_get_fw_version() >> 16;
+    // Keep this selection separate: newer firmware may move the store and add
+    // a pop rbp epilogue, which kelf's continuation slot also accepts.
+    uint64_t store_rax_rdi = offsets.cpu_switch - 0x1ee;
     uint64_t values[] = {
         comparison_table,      // comparison_table
         dmem_virt_base,        // dmem
@@ -914,6 +918,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
         fwver,                 // .fwver
+        store_rax_rdi,
 #define KDATA_OFFSET(x) offsets.x,
 #define ABSOLUTE_OFFSET(x) offsets.x,
 #include "../prosper0gdb/offsets/offset_list.txt"
