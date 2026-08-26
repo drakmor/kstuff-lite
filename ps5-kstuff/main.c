@@ -406,6 +406,15 @@ uint64_t find_empty_pml4_index(int idx)
 
 void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_base, uint64_t dmap_virt_base, uint64_t dmap, uint64_t cr3)
 {
+    enum
+    {
+        X86_PG_V = 1,
+        X86_PG_RW = 2,
+        X86_PG_U = 4,
+        X86_PG_PS = 1 << 7,
+    };
+    const uint64_t user_page = X86_PG_V | X86_PG_RW | X86_PG_U;
+    const uint64_t user_large_page = user_page | X86_PG_PS;
     static char zeros[4096];
     uint64_t user_start = (uint64_t)uelf_base[0];
     uint64_t user_end = (uint64_t)uelf_base[1];
@@ -416,18 +425,18 @@ void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_ba
     kmemcpy((void*)(pml4_virt+2048), (void*)(dmap+cr3+2048), 2048);
     uint64_t pml3_virt = uelf_cr3 + 4096;
     uint64_t pml3_dmap = uelf_cr3 + 16384; //user-accessible direct mapping of physical memory
-    copyin(pml4_virt + 8 * ((uelf_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_virt, 0, dmap, cr3) | 7}, 8);
-    copyin(pml4_virt + 8 * ((dmap_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_dmap, 0, dmap, cr3) | 7}, 8);
+    copyin(pml4_virt + 8 * ((uelf_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_virt, 0, dmap, cr3) | user_page}, 8);
+    copyin(pml4_virt + 8 * ((dmap_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_dmap, 0, dmap, cr3) | user_page}, 8);
     copyin(pml3_virt, zeros, 4096);
     uint64_t pml2_virt = uelf_cr3 + 8192;
-    copyin(pml3_virt + 8 * ((uelf_virt_base >> 30) & 511), &(uint64_t[1]){virt2phys_or_die(pml2_virt, 0, dmap, cr3) | 7}, 8);
+    copyin(pml3_virt + 8 * ((uelf_virt_base >> 30) & 511), &(uint64_t[1]){virt2phys_or_die(pml2_virt, 0, dmap, cr3) | user_page}, 8);
     copyin(pml2_virt, zeros, 4096);
     uint64_t pml1_virt = uelf_cr3 + 12288;
-    copyin(pml2_virt + 8 * ((uelf_virt_base >> 21) & 511), &(uint64_t[1]){virt2phys_or_die(pml1_virt, 0, dmap, cr3) | 7}, 8);
+    copyin(pml2_virt + 8 * ((uelf_virt_base >> 21) & 511), &(uint64_t[1]){virt2phys_or_die(pml1_virt, 0, dmap, cr3) | user_page}, 8);
     copyin(pml1_virt, zeros, 4096);
     build_uelf_pml1(pml1_virt, user_start, user_end, dmap, cr3);
     for(uint64_t i = 0; i < 512; i++)
-        copyin(pml3_dmap+8*i, &(uint64_t[1]){(i<<30) | 135}, 8);
+        copyin(pml3_dmap+8*i, &(uint64_t[1]){(i<<30) | user_large_page}, 8);
 }
 
 int find_proc(const char* name)
