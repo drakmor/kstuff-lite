@@ -281,6 +281,23 @@ struct kstuff_metrics
     /* Hardware DR snapshots avoided when PCB_DBREGS is clear. */
     uint64_t dbg_snapshot_reads;
     uint64_t dbg_snapshot_skips;
+
+    /* CR0 chain which avoids the secondary XSAVE/FXSAVE fault. */
+    uint64_t cr0_chain_read_clear_calls;
+    uint64_t cr0_chain_restore_calls;
+    uint64_t cr0_chain_failures;
+    uint64_t cr0_restore_calls;
+    uint64_t fpu_exits;
+
+    /* End-to-end and CR0-only FPU transition timings (TSC cycles). */
+    uint64_t fpu_enter_cycles_total;
+    uint64_t fpu_enter_cycles_max;
+    uint64_t fpu_exit_cycles_total;
+    uint64_t fpu_exit_cycles_max;
+    uint64_t cr0_read_clear_cycles_total;
+    uint64_t cr0_read_clear_cycles_max;
+    uint64_t cr0_restore_cycles_total;
+    uint64_t cr0_restore_cycles_max;
 };
 
 struct kstuff_word_log_entry
@@ -359,14 +376,14 @@ extern struct shared_area_layout shared_area;
 #define METRIC_MAX(field, value) do { } while(0)
 #endif
 
-_Static_assert(sizeof(struct kstuff_metrics) == 1912, "unexpected metrics size");
+_Static_assert(sizeof(struct kstuff_metrics) == 2016, "unexpected metrics size");
 _Static_assert(sizeof(struct kstuff_word_log) == 264, "unexpected word log size");
 _Static_assert(sizeof(struct kstuff_ioctl_com_entry) == 24, "unexpected ioctl com entry size");
 _Static_assert(sizeof(struct kstuff_ioctl_com_table) == 3088, "unexpected ioctl com table size");
 _Static_assert(sizeof(struct kstuff_msg_log) == 504, "unexpected message log size");
-_Static_assert(sizeof(struct kstuff_snapshot) == 5784, "unexpected snapshot size");
+_Static_assert(sizeof(struct kstuff_snapshot) == 5888, "unexpected snapshot size");
 #if KSTUFF_OBS
-_Static_assert(sizeof(struct shared_area_layout) == 7816, "unexpected shared_area size");
+_Static_assert(sizeof(struct shared_area_layout) == 7920, "unexpected shared_area size");
 #else
 _Static_assert(sizeof(struct shared_area_layout) == 2048, "unexpected non-OBS shared_area size");
 #endif

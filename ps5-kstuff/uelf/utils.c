@@ -433,7 +433,7 @@ static __attribute__((noinline)) int copy_u64_from_cached_kernel_mapping(
 }
 
 enum {
-    TRAP_FRAME_MAPPING_SIZE = (NREGS + 1) * sizeof(uint64_t),
+    TRAP_FRAME_MAPPING_SIZE = trap_frame_extended_size,
     JUST_RETURN_MAPPING_SIZE = 5 * sizeof(uint64_t),
 };
 
@@ -448,6 +448,40 @@ __attribute__((noinline)) int copy_to_trap_frame_cached(const void* src, size_t 
 {
     return copy_to_cached_kernel_mapping(&s_trap_frame_mapping, trap_frame,
                                          src, TRAP_FRAME_MAPPING_SIZE, size);
+}
+
+static __attribute__((noinline)) int copy_from_trap_frame_offset_cached(
+    void* dst, size_t offset, size_t size)
+{
+    if(offset > TRAP_FRAME_MAPPING_SIZE
+    || size > TRAP_FRAME_MAPPING_SIZE - offset)
+        return EFAULT;
+    uint64_t physical_address;
+    if(!get_cached_physical_address(&s_trap_frame_mapping, trap_frame,
+                                    TRAP_FRAME_MAPPING_SIZE,
+                                    &physical_address))
+        return copy_from_kernel_uncached(dst, trap_frame + offset, size);
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, size);
+    memcpy(dst, DMEM + physical_address + offset, size);
+    return 0;
+}
+
+static __attribute__((noinline)) int copy_to_trap_frame_offset_cached(
+    size_t offset, const void* src, size_t size)
+{
+    if(offset > TRAP_FRAME_MAPPING_SIZE
+    || size > TRAP_FRAME_MAPPING_SIZE - offset)
+        return EFAULT;
+    uint64_t physical_address;
+    if(!get_cached_physical_address(&s_trap_frame_mapping, trap_frame,
+                                    TRAP_FRAME_MAPPING_SIZE,
+                                    &physical_address))
+        return copy_to_kernel_uncached(trap_frame + offset, src, size);
+    METRIC_INC(copy_to_calls);
+    METRIC_ADD(copy_to_bytes, size);
+    memcpy(DMEM + physical_address + offset, src, size);
+    return 0;
 }
 
 __attribute__((noinline)) int copy_from_just_return_cached(void* dst,
@@ -561,6 +595,10 @@ extern char wrmsr_ret[];
 extern char mov_rax_cr0[];
 extern char mov_cr0_rax[];
 extern char fpusave_capture[];
+extern char cr0_capture[];
+extern char cr0_load[];
+extern char cr0_clear_store[];
+extern char cr0_write_ret[];
 extern char doreti_iret[];
 extern char syscall_after[];
 
@@ -728,6 +766,7 @@ static int read_cr0_clear_ts_legacy_checked(uint64_t* cr0)
 }
 
 static int fpusave_capture_disabled;
+static int cr0_chain_disabled;
 
 static int is_sane_cr0(uint64_t cr0)
 {
@@ -737,13 +776,88 @@ static int is_sane_cr0(uint64_t cr0)
         && (cr0 & required_bits) == required_bits;
 }
 
+static int cr0_chain_available(void)
+{
+    return (uint64_t)cr0_capture > 0x1000
+        && (uint64_t)cr0_load > 0x1000
+        && (uint64_t)cr0_clear_store > 0x1000
+        && (uint64_t)cr0_write_ret > 0x1000;
+}
+
+static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
+{
+    METRIC_INC(cr0_chain_read_clear_calls);
+    uint64_t zero = 0;
+    if(copy_to_trap_frame_offset_cached(fpu_cr0_scratch_offset, &zero,
+                                        sizeof(zero))
+    || copy_to_trap_frame_offset_cached(fpu_cr0_saved_offset, &zero,
+                                        sizeof(zero))
+    || copy_to_trap_frame_offset_cached(fpu_cr0_cleared_offset, &zero,
+                                        sizeof(zero)))
+    {
+        METRIC_INC(cr0_chain_failures);
+        return EFAULT;
+    }
+
+    uint64_t regs[NREGS] = {
+        [RDI] = trap_frame + fpu_cr0_scratch_offset,
+        [RSI] = trap_frame + fpu_cr0_cleared_offset,
+        [RIP] = (uint64_t)cr0_capture,
+        [CS] = 0x20,
+        [EFLAGS] = 2,
+        [RSP] = trap_frame + fpu_cr0_enter_stack_offset,
+    };
+    METRIC_INC(cr0_read_calls);
+    if(run_gadget_no_result_checked(regs))
+    {
+        METRIC_INC(cr0_chain_failures);
+        return EFAULT;
+    }
+
+    uint64_t saved, cleared, committed;
+    if(copy_from_trap_frame_offset_cached(&committed, fpu_cr0_scratch_offset,
+                                          sizeof(committed))
+    || copy_from_trap_frame_offset_cached(&saved, fpu_cr0_saved_offset,
+                                          sizeof(saved))
+    || copy_from_trap_frame_offset_cached(&cleared, fpu_cr0_cleared_offset,
+                                          sizeof(cleared))
+    || !is_sane_cr0(saved)
+    || !is_sane_cr0(cleared)
+    || cleared != (saved & ~8ull)
+    || committed != cleared)
+    {
+        /* If the chain cleared an originally set TS, restore it before exit. */
+        if(is_sane_cr0(saved) && (saved & 8))
+            (void)write_cr0_checked(saved);
+        cr0_chain_disabled = 1;
+        METRIC_INC(cr0_chain_failures);
+        return EFAULT;
+    }
+
+    *cr0 = saved;
+    if(!(saved & 8))
+        METRIC_INC(cr0_ts_already_clear);
+    METRIC_INC(cr0_clear_elided_transitions);
+    return 0;
+}
+
 int read_cr0_clear_ts_checked(uint64_t* cr0)
 {
     METRIC_INC(cr0_read_clear_calls);
+    METRIC_TIME_START(start_cycles);
+#define RETURN_CR0_READ_CLEAR(value) do { \
+    int _result = (value); \
+    METRIC_TIME(cr0_read_clear_cycles_total, cr0_read_clear_cycles_max, \
+                start_cycles); \
+    return _result; \
+} while(0)
+    if(cr0_chain_available() && !cr0_chain_disabled)
+        RETURN_CR0_READ_CLEAR(read_cr0_clear_ts_chain_checked(cr0));
+
     if((uint64_t)fpusave_capture <= 0x1000 || fpusave_capture_disabled)
     {
         METRIC_INC(cr0_read_clear_fallbacks);
-        return read_cr0_clear_ts_legacy_checked(cr0);
+        RETURN_CR0_READ_CLEAR(read_cr0_clear_ts_legacy_checked(cr0));
     }
 
     METRIC_INC(cr0_read_calls);
@@ -754,7 +868,7 @@ int read_cr0_clear_ts_checked(uint64_t* cr0)
         [RDI] = 0xdeadbeefdeadbeef,
     };
     if(run_gadget_with_trap_checked(regs))
-        return EFAULT;
+        RETURN_CR0_READ_CLEAR(EFAULT);
 
     /*
      * The non-canonical destination must raise #GP at the XSAVE or FXSAVE
@@ -785,13 +899,14 @@ int read_cr0_clear_ts_checked(uint64_t* cr0)
             (void)write_cr0_checked(regs[RCX]);
         fpusave_capture_disabled = 1;
         METRIC_INC(run_gadget_failures);
-        return EFAULT;
+        RETURN_CR0_READ_CLEAR(EFAULT);
     }
     *cr0 = regs[RCX];
     if(!(*cr0 & 8))
         METRIC_INC(cr0_ts_already_clear);
     METRIC_INC(cr0_clear_elided_transitions);
-    return 0;
+    RETURN_CR0_READ_CLEAR(0);
+#undef RETURN_CR0_READ_CLEAR
 }
 
 int write_cr0_checked(uint64_t cr0)
@@ -802,6 +917,51 @@ int write_cr0_checked(uint64_t cr0)
         [RAX] = cr0,
     };
     return run_gadget_no_result_checked(regs);
+}
+
+int restore_cr0_checked(uint64_t cr0)
+{
+    METRIC_INC(cr0_restore_calls);
+    METRIC_TIME_START(start_cycles);
+#define RETURN_CR0_RESTORE(value) do { \
+    int _result = (value); \
+    METRIC_TIME(cr0_restore_cycles_total, cr0_restore_cycles_max, \
+                start_cycles); \
+    return _result; \
+} while(0)
+    if(cr0_chain_available() && !cr0_chain_disabled)
+    {
+        METRIC_INC(cr0_chain_restore_calls);
+        METRIC_INC(cr0_write_calls);
+        uint64_t zero = 0;
+        if(copy_to_trap_frame_offset_cached(fpu_cr0_scratch_offset, &zero,
+                                            sizeof(zero)))
+        {
+            METRIC_INC(cr0_chain_failures);
+            RETURN_CR0_RESTORE(write_cr0_checked(cr0));
+        }
+        uint64_t regs[NREGS] = {
+            [RDI] = trap_frame + fpu_cr0_scratch_offset,
+            [RAX] = cr0,
+            [RIP] = (uint64_t)cr0_write_ret,
+            [CS] = 0x20,
+            [EFLAGS] = 2,
+            [RSP] = trap_frame + fpu_cr0_exit_stack_offset,
+        };
+        if(!run_gadget_no_result_checked(regs))
+        {
+            uint64_t committed;
+            if(!copy_from_trap_frame_offset_cached(
+                    &committed, fpu_cr0_scratch_offset, sizeof(committed))
+            && committed == cr0)
+                RETURN_CR0_RESTORE(0);
+        }
+        cr0_chain_disabled = 1;
+        METRIC_INC(cr0_chain_failures);
+        RETURN_CR0_RESTORE(write_cr0_checked(cr0));
+    }
+    RETURN_CR0_RESTORE(write_cr0_checked(cr0));
+#undef RETURN_CR0_RESTORE
 }
 
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs)

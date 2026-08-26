@@ -790,6 +790,100 @@ static uint64_t get_fpusave_capture(uint64_t fwver)
     }
 }
 
+/*
+ * CR0 save/clear chain without a secondary XSAVE/FXSAVE fault.  cr0_capture
+ * stores the exact CR0 at
+ * [RDI+0x58]; cr0_load reloads it, cr0_clear_store clears TS and stores the
+ * new value through RSI, and cr0_write_ret commits RAX to CR0.  The helpers
+ * were verified independently in each kernel image -- do not borrow these
+ * offsets for adjacent firmware revisions.
+ *
+ * Porting these offsets to a new kernel (use the executable/XO kernel image):
+ *
+ *  1. Locate the kernel data-base symbol/address used by the prosper0gdb
+ *     offset table.  Convert every IDA address with
+ *
+ *       runtime = kdata_base + (gadget_ea - ida_kdata_base_ea)
+ *
+ *     The gadgets below precede kdata in the known kernels, hence the switch
+ *     entries are written as kdata_base - (ida_kdata_base_ea - gadget_ea).
+ *
+ *  2. Find and disassemble all privileged CR0 instructions, rather than
+ *     copying a nearby firmware's delta:
+ *       0f 20 c0 48 89 47 58
+ *                          mov rax, cr0; mov [rdi+0x58], rax
+ *       0f 22 c0          mov cr0, rax
+ *       0f 06             clts
+ *     Search ordinary instructions for the two non-privileged helpers:
+ *       48 8b 47 58       mov rax, [rdi+0x58]       (cr0_load)
+ *       48 83 e0 f7 ...   and rax, -9; store via RSI (cr0_clear_store)
+ *     Compiler spelling may differ, so validate semantics in disassembly;
+ *     the byte strings are search seeds, not sufficient validation.
+ *
+ *  3. Select entry points with exactly these contracts:
+ *       cr0_capture:     [RDI+0x58]=CR0 (RAX may be clobbered later)
+ *       cr0_load:        RAX=[RDI+0x58]
+ *       cr0_clear_store: RAX&=~CR0_TS and [RSI]=RAX
+ *       cr0_write_ret:   CR0=RAX
+ *     Each helper must reach either RET or POP RBP; RET without clobbering
+ *     RDI/RSI or changing RSP in another way.  kelf.asm has one padding slot
+ *     after every helper to support precisely those two epilogues.
+ *
+ *  4. Add all four offsets for the firmware together.  If any contract is
+ *     uncertain, leave the firmware unsupported (return 1), so UELF uses the
+ *     legacy checked path.  Build with KSTUFF_OBS=1 and verify after crypto
+ *     traffic that cr0_chain_enter/exit increase, cr0_chain_fail stays zero,
+ *     and cr0_rc_fallback stays zero.  A failed chain is disabled at runtime,
+ *     but first-use testing can still be fatal if an entry point is wrong.
+ */
+static uint64_t get_cr0_capture(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x96dd1d;
+    case 0x403: return kdata_base - 0x9d68ed;
+    case 0x761: return kdata_base - 0xa1246d;
+    case 0x940: return kdata_base - 0xa59b2d;
+    default: return 1;
+    }
+}
+
+static uint64_t get_cr0_load(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x8beec0;
+    case 0x403: return kdata_base - 0x92333c;
+    case 0x761: return kdata_base - 0x95cf3c;
+    case 0x940: return kdata_base - 0x9a646c;
+    default: return 1;
+    }
+}
+
+static uint64_t get_cr0_clear_store(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x52a946;
+    case 0x403: return kdata_base - 0x566b70;
+    case 0x761: return kdata_base - 0x582ed5;
+    case 0x940: return kdata_base - 0x5a3905;
+    default: return 1;
+    }
+}
+
+static uint64_t get_cr0_write_ret(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x4f5a87;
+    case 0x403: return kdata_base - 0x52dc13;
+    case 0x761: return kdata_base - 0x549203;
+    case 0x940: return kdata_base - 0x56ada3;
+    default: return 1;
+    }
+}
+
 #define USE_INT3_SYSCALL_HOOK 1
 #define INT13_IST_INDEX 3
 #define INT1_IST_INDEX 4
@@ -916,6 +1010,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         ".uelf_entry"+zero,
         ".fwver"+zero,
         "fpusave_capture"+zero,
+        "cr0_capture"+zero,
+        "cr0_load"+zero,
+        "cr0_clear_store"+zero,
+        "cr0_write_ret"+zero,
         "store_rax_rdi"+zero,
 #define KDATA_OFFSET(x) (#x)+zero,
 #define ABSOLUTE_OFFSET(x) (#x)+zero,
@@ -945,6 +1043,10 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0x1236,                // .uelf_entry
         fwver,                 // .fwver
         get_fpusave_capture(fwver), // fpusave_capture
+        get_cr0_capture(fwver), // cr0_capture
+        get_cr0_load(fwver), // cr0_load
+        get_cr0_clear_store(fwver), // cr0_clear_store
+        get_cr0_write_ret(fwver), // cr0_write_ret
         store_rax_rdi,
 #define KDATA_OFFSET(x) offsets.x,
 #define ABSOLUTE_OFFSET(x) offsets.x,

@@ -15,11 +15,14 @@ int uelf_fpu_enter(void)
         return 0;
     }
     METRIC_INC(fpu_enters);
+    METRIC_TIME_START(start_cycles);
     fpu_state_saved = 0;
     if(read_cr0_clear_ts_checked(&saved_cr0))
     {
         METRIC_INC(fpu_enter_failures);
         fpu_depth = 0;
+        METRIC_TIME(fpu_enter_cycles_total, fpu_enter_cycles_max,
+                    start_cycles);
         return 1;
     }
     asm volatile("xgetbv":"=d"(xsave_edx),"=a"(xsave_eax):"c"(0));
@@ -28,6 +31,7 @@ int uelf_fpu_enter(void)
     uint32_t mxcsr = 0x1f80;
     asm volatile("ldmxcsr %0"::"m"(mxcsr));
     fpu_state_saved = 1;
+    METRIC_TIME(fpu_enter_cycles_total, fpu_enter_cycles_max, start_cycles);
     return 0;
 }
 
@@ -39,8 +43,11 @@ void uelf_fpu_exit(void)
         return;
     if(!fpu_state_saved)
         return;
+    METRIC_INC(fpu_exits);
+    METRIC_TIME_START(start_cycles);
     asm volatile("xrstor %0"::"m"(xsave_area),"a"(xsave_eax),"d"(xsave_edx));
-    if((saved_cr0 & 8) && write_cr0_checked(saved_cr0))
+    if((saved_cr0 & 8) && restore_cr0_checked(saved_cr0))
         METRIC_INC(fpu_exit_failures);
     fpu_state_saved = 0;
+    METRIC_TIME(fpu_exit_cycles_total, fpu_exit_cycles_max, start_cycles);
 }

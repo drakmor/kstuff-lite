@@ -19,6 +19,13 @@
 %define iret_rsp (iret_rip+24)
 %define iret_ss (iret_rip+32)
 
+%define fpu_cr0_enter_stack_offset 512
+%define fpu_cr0_exit_stack_offset 1024
+%define fpu_cr0_scratch_offset 1536
+%define fpu_cr0_saved_offset (fpu_cr0_scratch_offset+0x58)
+%define fpu_cr0_cleared_offset (fpu_cr0_scratch_offset+0x200)
+%define trap_frame_extended_size (fpu_cr0_cleared_offset+8)
+
 %define td_proc 8
 %define td_pcb 0x3f8
 %define td_retval 0x408
