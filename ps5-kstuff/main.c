@@ -891,10 +891,11 @@ static uint64_t get_store_rax_rdi(uint64_t fwver)
     {
     /*
      * 13.60 no longer has the writer at cpu_switch-0x1ee.  Verified in the
-     * executable kernel image at IDA 0xffffffff80cdbb5e, with KDATA based at
-     * 0xffffffff819a0000 (bytes: 48 89 07 5d c3).
+     * executable kernel image at IDA 0xffffffff80cdbb5e, relative to the
+     * 13.xx SDK kdata anchor at 0xffffffff80ec0000
+     * (bytes: 48 89 07 5d c3).
      */
-    case 0x1360: return kdata_base - 0xcc44a2;
+    case 0x1360: return kdata_base - 0x1e44a2;
     default: return offsets.cpu_switch - 0x1ee;
     }
 }
