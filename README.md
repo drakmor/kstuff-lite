@@ -1,101 +1,210 @@
-# kstuff-lite: What's New
+# kstuff-lite — `1.11-opt`
 
-- `fpkg` handling and related crypto paths were improved.
-  A lot of internal logic was sped up: fewer repeated calculations, fewer repeated memory reads, and faster handling of adjacent data blocks.
+`1.11-opt` is an optimization and firmware-porting branch built on top of the
+existing kstuff-lite crypto, FSELF, NPDRM, and loader work. Relative to
+`origin/main`, it contains 18 commits focused on reducing UELF/KELF transition
+cost, making FPU/CR0 handling safer and faster, improving diagnostics, and
+adding firmware 2.50 support.
 
-- `FSELF` handling was improved.
-  Parsing and patching now happen more carefully and more efficiently, with extra protection against repeated-access edge cases.
+## Highlights
 
-- Startup and early initialization were sped up.
-  Process lookup and internal memory setup were optimized. Some unnecessary allocations and repeated copies were removed.
+- Firmware 2.50 support, including kernel offsets, the older PCB layout, the
+  2.50 kernel-data anchor adjustment, and retail ShellCore patches.
+- Cached translations for fixed per-CPU kernel objects used on every UELF
+  entry, including mappings that cross a physical segment boundary.
+- Narrow checked trap-frame and stack reads instead of copying unused frame
+  prefixes.
+- A single-transition debug-register restore and skipped hardware snapshots
+  when the current thread does not own active debug registers.
+- A validated, normally fault-free CR0 save/TS-clear chain for 2.50, 4.03,
+  7.61, and 9.40.
+- Fast CR0 entry through a one-shot KELF continuation and deferred CR0 restore
+  at the final KELF exit.
+- Runtime selection between `XSAVEC` and `XSAVE`, with one-time CPUID/XCR0
+  discovery and strict save-area validation.
+- Expanded opt-in performance and failure metrics through `KSTUFF_OBS=1`.
+- Reuse of the loader's existing kernel pipe by prosper0gdb.
 
-- Protection against freezes and kernel panics was improved.
-  Critical paths now perform safer validation. If important data cannot be read or written correctly, the code more often tries to stop safely instead of continuing with corrupted state.
+## UELF trap and kernel-memory paths
 
-- Automatic mounting can now be disabled.
-  This is useful if you want a more controlled startup flow or if you are debugging.
+### Narrow checked frame reads
 
-## Main changes by subsystem
+Trap handlers now read only the portion of a saved stack frame that they use.
+`fpkg`, `kekcall`, and utility trap handling use checked tail-copy helpers;
+mailbox and syscall paths use checked scalar reads and writes. Where the return
+address is already known, FSELF handling updates `RSP` and `RIP` directly
+instead of reading the same value from kernel memory again.
 
-### 1. Payload loading and startup
+This reduces `virt2phys` calls and copied bytes without weakening error
+handling. A failed read or write returns `EFAULT` or leaves the request on its
+normal fallback path instead of consuming partially read state.
 
-- Memory for loading the module is now allocated automatically in the required size.
-- The loader startup path was optimized.
-- `CR3` preparation and related setup were improved.
-- A more compatible `ShellCore` process lookup path was restored, to avoid trading too much stability for aggressive optimization.
-- A prepared zero buffer is now reused instead of clearing memory the slow way each time.
+### Fixed mapping caches
 
-What this improves:
-- faster startup;
-- fewer unnecessary operations during loading;
-- lower chance of hitting unstable behavior during early initialization.
+The following stable per-CPU objects have cached virtual-to-physical mappings:
 
-### 2. `fpkg` and PFS crypto handling
+- the extended trap frame;
+- the `justreturn` frame;
+- the current-thread pointer in `pcpu`;
+- `TSS.RSP0`;
+- the `wrmsr` argument area;
+- the CR0 enter and exit continuation slots.
 
-- Caches were added for crypto state.
-- Expanded `XTS` keys and `HMAC-SHA256` state are now cached.
-- Virtual-to-physical translation was sped up in crypto paths.
-- Adjacent `XTS` messages can now be processed together.
-- A direct `DMEM` fast path was added for `XTS` sectors.
-- Batched `XTS` handling for `fpkg` was optimized.
-- A shared slow temporary buffer was removed.
-- `HMAC-SHA256` was specialized for the fake-key crypto paths that are actually used.
+The cache can represent two physical segments, so an object crossing a page or
+mapping boundary does not need to fall back on every access. Initialization is
+checked, publication is atomic, and an uncached checked copy remains available
+if a mapping cannot be cached.
 
-What this improves:
-- faster `fpkg` mounting and processing;
-- less redundant crypto work;
-- lower overhead in repeated operations.
+The UELF page-table setup also spells out the user, writable, present, and
+large-page flags explicitly. Direct-map entries are not made global, avoiding
+unsafe stale TLB translations when switching between the kernel and UELF CR3.
 
-### 3. `FSELF` handling
+## Crypto dispatch
 
-- A cache was added for already parsed `FSELF` headers.
-- A cache was added for the active `SELF` context within a single system call.
-- Extra validation was added so an old and a new object are not confused if the same address gets reused.
-- `authinfo` loading became lazy: it is only read when it is actually needed.
-- `SELF` block copying became safer:
-  overlapping memory ranges are now handled correctly;
-  no-op copies are skipped;
-  unnecessary reads were reduced.
+Each crypto message is read once as a checked snapshot of the first 21 qwords
+(168 bytes), followed by a separate checked 8-byte read of the linked-list
+pointer at `msg + 320`. The implementation does **not** perform a contiguous
+328-byte read.
 
-What this improves:
-- faster repeated `SELF` processing;
-- fewer unnecessary kernel memory reads;
-- lower risk of corrupting data in complex loading scenarios.
+During classification, the fake key is retrieved once and passed to the XTS or
+HMAC handler. This removes the former `has_fake_key()` lookup followed by a
+second `get_fake_key()` lookup. XTS and HMAC cache selection also performs one
+scan that records both a matching entry and the first free entry.
 
-### 4. NPDRM and license-related handling
+Unhandled or non-fake messages retain the normal firmware path, and linked
+message chains are still traversed correctly. Snapshot read failures are
+counted and fail safely.
 
-- A cache was added for the debug `RIF` key schedule.
-- Internal hashing was moved to a lighter and faster wrapper.
-- Extra nested FPU transitions were removed where the FPU was already held.
-- The `NPDRM` handler now deals with errors more carefully and with slightly lower fixed overhead.
+## Debug-register transitions
 
-What this improves:
-- less unnecessary work in license and key-related paths;
-- more predictable behavior when something goes wrong.
+Debug-register restore now enters the verified tail of the kernel
+`cpu_switch` implementation and restores DR0, DR1, DR2, DR3, DR6, and DR7 in a
+single gadget transition. The 2.50 and 3.00+ helper layouts use their own
+validated entry deltas.
 
-### 5. Crypto library and Zen 2 optimization
+Before installing a watchpoint, the code checks `PCB_DBREGS`. If the flag is
+clear, the thread does not own live hardware debug-register state, so a stale
+hardware snapshot is skipped and the saved state is initialized as disabled.
+PCB flags are accessed as a 32-bit field, and rollback restores both the old
+registers and the original ownership flag if installation fails.
 
-- `libtomcrypt` was replaced with a faster minimal path based on `isa-l_crypto`.
-- A custom minimal PS5 adapter for `isa-l_crypto` was added.
-- A dedicated fast `SHA-256` path optimized for `Zen 2` was added.
-- `uelf` and the crypto-related parts of the build are now better tuned for the PS5 CPU.
-- Optimization settings were made safer and more predictable.
+KELF 8-byte writes also use a scalar `mov [rdi], rax` store helper instead of
+configuring `rep movsb` for every single-qword update.
 
-What this improves:
-- higher speed in real crypto workloads;
-- less unnecessary code;
-- better fit for actual PS5 hardware.
+## FPU and CR0 handling
 
-### 6. Reliability and error handling
+### Layered CR0 entry
 
-- `fsbase` offset lookup in `kekcall` was fixed.
-- A case where a fake key could remain half-broken after a partial failure was fixed.
-- Checked helpers were added for reading and writing sensitive kernel data.
-- Error handling was improved in `syscall`, `trap`, `mailbox`, `FSELF`, `fpkg`, and `NPDRM` paths.
-- Debug register save and restore handling was fixed.
-- FPU entry failures are now handled explicitly instead of being ignored.
+UELF crypto uses SIMD instructions and must preserve kernel FPU state while
+temporarily clearing `CR0.TS`. The branch implements three paths:
 
-What this improves:
-- lower chance of kernel panics caused by corrupted state;
-- better behavior in rare failures and edge cases;
-- safer debugging.
+1. On 2.50, 4.03, 7.61, and 9.40, the primary path runs a firmware-specific
+   KELF chain that captures CR0, clears TS, commits the new value, and records
+   all three states without deliberately causing a second XSAVE/FXSAVE fault.
+2. If the chain has been disabled, a firmware-specific `fpusave_capture`
+   fallback deliberately faults on a non-canonical XSAVE/FXSAVE destination.
+   It accepts the result only when the trap is `#GP`, RIP is exactly the
+   expected XSAVE or FXSAVE instruction, and the captured CR0 value is sane.
+3. Firmware without verified offsets uses the original checked CR0 read and
+   write gadgets. If TS is already clear, the write transition is skipped.
+
+The primary chain poisons and transfers one compact `0x60`-byte result block,
+then validates the saved, cleared, and committed values. A mismatch restores
+TS when possible, disables the fast chain, and reports failure instead of
+trusting partial state.
+
+### Fast entry and deferred restore
+
+For the primary path, UELF arms a one-shot KELF continuation and performs one
+`yield()`; KELF resets the hook before running the CR0 chain. This bypasses the
+generic full-register gadget return path. The fixed continuation address and
+its physical mapping are cached after the first use.
+
+After `XRSTOR`, CR0 restoration is postponed until `uelf_fpu_finish()`, just
+before the terminal UELF `HLT`. KELF then restores CR0 and continues through
+the normal final exit. Nested FPU users share the outer save/restore pair, so
+they do not add extra CR0 or XSAVE transitions.
+
+### XSAVE mode selection
+
+CPUID and XCR0 discovery is performed once per UELF instance. Before using an
+architectural save instruction, the code verifies:
+
+- CPUID exposes leaf `0xD`;
+- the CPU and OS expose XSAVE/OSXSAVE;
+- x87 and SSE are enabled in XCR0;
+- XCR0 contains only state components reported by CPUID;
+- `CPUID.(D,0):EBX` is within the architectural minimum, the reported maximum,
+  and the 4096-byte aligned local buffer.
+
+`XSAVEC` is selected when `CPUID.(D,1):EAX[1]` advertises it; otherwise the code
+uses `XSAVE`. Restore always uses `XRSTOR`. `XSAVEOPT` is deliberately not used
+because the scratch buffer is not guaranteed to contain the same owner's
+previous state. An unusable configuration disables FPU entry cleanly instead
+of overflowing the buffer or executing an unsupported instruction.
+
+## prosper0gdb loader handoff
+
+The loader passes prosper0gdb a versioned bootstrap structure containing its
+existing read/write pipe descriptors and kernel pipe address. prosper0gdb
+reuses that primitive instead of allocating and resolving another pipe. The
+older `victim_pktopts` ABI remains recognized for callers that do not provide
+the bootstrap magic.
+
+On firmware 2.50, the loader-provided SDK data anchor differs from the anchor
+used to generate the prosper0gdb offset table by `0x1010000`; the handoff now
+applies that adjustment only on 2.50.
+
+## Observability
+
+Build with metrics and the debug reader enabled:
+
+```sh
+export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
+KSTUFF_OBS=1 ./ci-ps5-kstuff-ldr.sh
+```
+
+A normal build keeps the extra counters out of hot paths:
+
+```sh
+./ci-ps5-kstuff-ldr.sh
+```
+
+The added metrics cover:
+
+- UELF entries, checked frame failures, and total/max entry cycles;
+- gadget calls, failures, result-readback reductions, and cycles;
+- scalar and bulk kernel copies;
+- crypto snapshot reads, failures, and cycles;
+- mapping-cache hits, misses, and fallbacks;
+- debug-register reads, writes, single-transition chains, and skipped
+  snapshots;
+- CR0 fast-entry/deferred-restore arms, fallbacks, failures, hook-cache use,
+  and arm cost;
+- FPU enter/exit, XSAVE/XSAVEC/XRSTOR counts, failures, and cycle cost.
+
+`ps5-kstuff/debug-reader.c` prints these counters from the shared observation
+area. Metrics are intended for comparison runs; they add measurement overhead
+and should not be used as release-performance numbers.
+
+## Firmware porting notes
+
+CR0 fast-path offsets are firmware-specific and must not be copied from a
+nearby version. `ps5-kstuff/main.c` contains the complete search and validation
+procedure for `cr0_capture`, `cr0_load`, `cr0_clear_store`, and
+`cr0_write_ret`, including byte-pattern seeds and the IDA-to-runtime address
+conversion.
+
+For a new firmware, add all four verified offsets together. If any helper's
+register, stack, or epilogue contract is uncertain, leave the fast path
+unavailable and use the checked legacy implementation. An observation build
+should show increasing `cr0_chain_enter`, `cr0_fast_enter`, and
+`cr0_defer_arm`, with zero `cr0_chain_fail` and no unexpected fallbacks.
+
+## Existing functionality retained from the parent branch
+
+The branch retains the earlier kstuff-lite work: cached XTS/HMAC state,
+batched and direct-DMEM PFS crypto paths, FSELF header/context caches, lazy
+`authinfo`, overlap-safe SELF block copies, NPDRM/RIF caching, Zen 2-tuned
+`isa-l_crypto`, checked kernel copy helpers, improved error handling, optimized
+startup allocation, and the option to disable automatic mounting.
