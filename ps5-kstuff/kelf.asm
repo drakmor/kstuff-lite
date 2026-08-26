@@ -446,6 +446,7 @@ times iret_rip-(ist_after_userspace-errc_after_userspace) db 0
 dq nop_ret
 dq 0x20
 dq 2
+ist_after_userspace_rsp:
 dq after_userspace
 dq 0
 after_userspace:
@@ -508,6 +509,11 @@ dq 0
 justreturn_bak:
 times 5 dq 0
 
+; UELF learns the address of the final-HLT RSP slot through the trap frame;
+; this keeps KELF-private symbol addresses out of the separately loaded UELF.
+fpu_cr0_exit_hook_ptr:
+dq ist_after_userspace_rsp
+
 ; CR0 save/clear stack.  The padding slots normalize helpers which end in
 ; either RET (2.50) or POP RBP; RET (4.03/7.61/9.40).
 times fpu_cr0_enter_stack_offset-($-regs_for_exit) db 0
@@ -522,17 +528,37 @@ dq store_rax_rdi
 dq nop_ret
 return_to_uelf
 
-; CR0 restore stack, entered with the original value already in RAX.
+; Terminal CR0 restore stack.  uelf_fpu_finish() redirects only the final HLT
+; here, so an ordinary yield() after XRSTOR cannot terminate the UELF early.
+; Reset the hook before touching CR0, then load the deferred value through the
+; same firmware-specific helper already exercised by the enter chain.
 times fpu_cr0_exit_stack_offset-($-regs_for_exit) db 0
 fpu_cr0_exit_stack:
+pokeq ist_after_userspace_rsp, after_userspace
+dq pop_all_iret
+times iret_rdi db 0
+dq regs_for_exit+fpu_cr0_deferred_offset-0x58
+times iret_rip-iret_rdi-8 db 0
+dq cr0_load
+dq 0x20
+dq 2
+dq .after_cr0_load
+dq 0
+.after_cr0_load:
 dq nop_ret
-dq store_rax_rdi
+dq cr0_write_ret
 dq nop_ret
-return_to_uelf
+dq doreti_iret
+dq nop_ret
+dq 0x20
+dq 2
+dq after_userspace
+dq 0
 
 ; The capture helper writes its machine-state snapshot here.  The cleared CR0
 ; is stored separately so an invalid/partial capture cannot be mistaken for a
 ; successfully cleared value.
 times fpu_cr0_scratch_offset-($-regs_for_exit) db 0
 times 0x200 db 0
+dq 0
 dq 0

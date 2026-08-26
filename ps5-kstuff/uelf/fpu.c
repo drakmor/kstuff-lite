@@ -4,8 +4,10 @@
 __attribute__((aligned(64))) static char xsave_area[4096]; //is this enough?
 static uint32_t xsave_eax, xsave_edx;
 static uint64_t saved_cr0;
+static uint64_t pending_cr0;
 static uint32_t fpu_depth;
 static uint32_t fpu_state_saved;
+static uint32_t cr0_restore_pending;
 
 int uelf_fpu_enter(void)
 {
@@ -46,8 +48,22 @@ void uelf_fpu_exit(void)
     METRIC_INC(fpu_exits);
     METRIC_TIME_START(start_cycles);
     asm volatile("xrstor %0"::"m"(xsave_area),"a"(xsave_eax),"d"(xsave_edx));
-    if((saved_cr0 & 8) && restore_cr0_checked(saved_cr0))
-        METRIC_INC(fpu_exit_failures);
+    if((saved_cr0 & 8) && !cr0_restore_pending)
+    {
+        pending_cr0 = saved_cr0;
+        cr0_restore_pending = 1;
+    }
     fpu_state_saved = 0;
     METRIC_TIME(fpu_exit_cycles_total, fpu_exit_cycles_max, start_cycles);
+}
+
+/* Called by crt.asm immediately before the terminal HLT, after all yields. */
+void uelf_fpu_finish(void)
+{
+    if(!cr0_restore_pending)
+        return;
+    uint64_t cr0 = pending_cr0;
+    cr0_restore_pending = 0;
+    if(defer_cr0_restore_checked(cr0))
+        METRIC_INC(fpu_exit_failures);
 }

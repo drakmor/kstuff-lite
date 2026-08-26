@@ -646,6 +646,7 @@ extern char cr0_capture[];
 extern char cr0_load[];
 extern char cr0_clear_store[];
 extern char cr0_write_ret[];
+extern char pop_all_iret[];
 extern char doreti_iret[];
 extern char syscall_after[];
 
@@ -966,7 +967,7 @@ int write_cr0_checked(uint64_t cr0)
     return run_gadget_no_result_checked(regs);
 }
 
-int restore_cr0_checked(uint64_t cr0)
+int defer_cr0_restore_checked(uint64_t cr0)
 {
     METRIC_INC(cr0_restore_calls);
     METRIC_TIME_START(start_cycles);
@@ -978,35 +979,20 @@ int restore_cr0_checked(uint64_t cr0)
 } while(0)
     if(cr0_chain_available() && !cr0_chain_disabled)
     {
-        METRIC_INC(cr0_chain_restore_calls);
-        METRIC_INC(cr0_write_calls);
-        uint64_t zero = 0;
-        if(copy_to_trap_frame_offset_cached(fpu_cr0_scratch_offset, &zero,
-                                            sizeof(zero)))
+        uint64_t hook;
+        uint64_t restore_stack = trap_frame + fpu_cr0_exit_stack_offset;
+        if(!copy_to_trap_frame_offset_cached(fpu_cr0_deferred_offset, &cr0,
+                                             sizeof(cr0))
+        && !copy_from_trap_frame_offset_cached(
+                &hook, fpu_cr0_exit_hook_ptr_offset, sizeof(hook))
+        && (hook >> 48) == 0xffff
+        && !copy_u64_to_kernel(hook, restore_stack))
         {
-            METRIC_INC(cr0_chain_failures);
-            RETURN_CR0_RESTORE(write_cr0_checked(cr0));
+            METRIC_INC(cr0_deferred_restore_arms);
+            RETURN_CR0_RESTORE(0);
         }
-        uint64_t regs[NREGS] = {
-            [RDI] = trap_frame + fpu_cr0_scratch_offset,
-            [RAX] = cr0,
-            [RIP] = (uint64_t)cr0_write_ret,
-            [CS] = 0x20,
-            [EFLAGS] = 2,
-            [RSP] = trap_frame + fpu_cr0_exit_stack_offset,
-        };
-        if(!run_gadget_no_result_checked(regs))
-        {
-            uint64_t committed;
-            if(!copy_from_trap_frame_offset_cached(
-                    &committed, fpu_cr0_scratch_offset, sizeof(committed))
-            && committed == cr0)
-                RETURN_CR0_RESTORE(0);
-        }
-        cr0_chain_disabled = 1;
-        METRIC_INC(cr0_chain_failures);
-        RETURN_CR0_RESTORE(write_cr0_checked(cr0));
     }
+    METRIC_INC(cr0_deferred_restore_fallbacks);
     RETURN_CR0_RESTORE(write_cr0_checked(cr0));
 #undef RETURN_CR0_RESTORE
 }
