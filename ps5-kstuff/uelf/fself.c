@@ -242,7 +242,11 @@ static int set_dbgregs_for_watchpoint(uint64_t* regs, const uint64_t* dbgregs, s
     if(copy_to_kernel(new_rsp, buf, sizeof(buf)))
         return 0;
     if(install_dbgregs_checked(dbgregs, &snapshot))
+    {
+        /* The shifted frame overlaps the live frame at the old RSP. */
+        (void)copy_to_kernel(regs[RSP], buf, frame_size);
         return 0;
+    }
     regs[RSP] = new_rsp;
     return 1;
 }
