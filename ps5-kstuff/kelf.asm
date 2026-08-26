@@ -556,9 +556,8 @@ dq after_userspace
 dq 0
 
 ; The capture helper writes its machine-state snapshot here.  The cleared CR0
-; is stored separately so an invalid/partial capture cannot be mistaken for a
-; successfully cleared value.
+; is adjacent to the committed value, while the capture helper's fixed +0x58
+; output remains in the same compact result block.  UELF poisons and copies
+; this whole block at once so stale state cannot pass validation.
 times fpu_cr0_scratch_offset-($-regs_for_exit) db 0
-times 0x200 db 0
-dq 0
-dq 0
+times 0x68 db 0

@@ -834,14 +834,19 @@ static int cr0_chain_available(void)
 
 static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
 {
+    struct cr0_chain_result
+    {
+        uint64_t committed;
+        uint64_t cleared;
+        uint64_t unused[9];
+        uint64_t saved;
+    } result;
+    _Static_assert(sizeof(result) == 0x60, "unexpected CR0 result layout");
+
     METRIC_INC(cr0_chain_read_clear_calls);
-    uint64_t zero = 0;
-    if(copy_to_trap_frame_offset_cached(fpu_cr0_scratch_offset, &zero,
-                                        sizeof(zero))
-    || copy_to_trap_frame_offset_cached(fpu_cr0_saved_offset, &zero,
-                                        sizeof(zero))
-    || copy_to_trap_frame_offset_cached(fpu_cr0_cleared_offset, &zero,
-                                        sizeof(zero)))
+    memset(&result, 0xff, sizeof(result));
+    if(copy_to_trap_frame_offset_cached(fpu_cr0_scratch_offset, &result,
+                                        sizeof(result)))
     {
         METRIC_INC(cr0_chain_failures);
         return EFAULT;
@@ -862,28 +867,23 @@ static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
         return EFAULT;
     }
 
-    uint64_t saved, cleared, committed;
-    if(copy_from_trap_frame_offset_cached(&committed, fpu_cr0_scratch_offset,
-                                          sizeof(committed))
-    || copy_from_trap_frame_offset_cached(&saved, fpu_cr0_saved_offset,
-                                          sizeof(saved))
-    || copy_from_trap_frame_offset_cached(&cleared, fpu_cr0_cleared_offset,
-                                          sizeof(cleared))
-    || !is_sane_cr0(saved)
-    || !is_sane_cr0(cleared)
-    || cleared != (saved & ~8ull)
-    || committed != cleared)
+    if(copy_from_trap_frame_offset_cached(&result, fpu_cr0_scratch_offset,
+                                          sizeof(result))
+    || !is_sane_cr0(result.saved)
+    || !is_sane_cr0(result.cleared)
+    || result.cleared != (result.saved & ~8ull)
+    || result.committed != result.cleared)
     {
         /* If the chain cleared an originally set TS, restore it before exit. */
-        if(is_sane_cr0(saved) && (saved & 8))
-            (void)write_cr0_checked(saved);
+        if(is_sane_cr0(result.saved) && (result.saved & 8))
+            (void)write_cr0_checked(result.saved);
         cr0_chain_disabled = 1;
         METRIC_INC(cr0_chain_failures);
         return EFAULT;
     }
 
-    *cr0 = saved;
-    if(!(saved & 8))
+    *cr0 = result.saved;
+    if(!(result.saved & 8))
         METRIC_INC(cr0_ts_already_clear);
     METRIC_INC(cr0_clear_elided_transitions);
     return 0;
