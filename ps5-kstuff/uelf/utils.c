@@ -331,6 +331,8 @@ DEFINE_MAPPING_CACHE(s_just_return_mapping, just_return_mapping);
 DEFINE_MAPPING_CACHE(s_pcpu_mapping, pcpu_mapping);
 DEFINE_MAPPING_CACHE(s_tss_rsp0_mapping, tss_mapping);
 DEFINE_MAPPING_CACHE(s_wrmsr_args_mapping, wrmsr_args_mapping);
+DEFINE_MAPPING_CACHE(s_cr0_enter_hook_mapping, cr0_enter_hook_mapping);
+DEFINE_MAPPING_CACHE(s_cr0_exit_hook_mapping, cr0_exit_hook_mapping);
 
 #undef DEFINE_MAPPING_CACHE
 
@@ -438,6 +440,23 @@ static void copy_to_kernel_mapping(const struct kernel_mapping_cache* cache,
         memcpy(DMEM + cache->physical_address[1] + second_offset,
                (const char*)src + first_size, size - first_size);
     }
+}
+
+/*
+ * The two continuation slots belong to the per-CPU KELF and do not move for
+ * its lifetime.  Keep their tiny mappings separate: kernel_mapping_cache is
+ * intentionally address-less after initialization and must only be used for
+ * the exact address which initialized it.
+ */
+static __attribute__((noinline)) int copy_u64_to_fixed_kernel_mapping(
+    struct kernel_mapping_cache* cache, uint64_t dst, uint64_t value)
+{
+    if(!get_cached_kernel_mapping(cache, dst, sizeof(value)))
+        return copy_u64_to_kernel(dst, value);
+    METRIC_INC(copy_to_calls);
+    METRIC_ADD(copy_to_bytes, sizeof(value));
+    copy_to_kernel_mapping(cache, 0, &value, sizeof(value));
+    return 0;
 }
 
 static __attribute__((noinline)) int copy_from_cached_kernel_mapping(
@@ -832,19 +851,41 @@ static int cr0_chain_available(void)
         && (uint64_t)cr0_write_ret > 0x1000;
 }
 
+static uint64_t cr0_enter_hook_address;
+static uint64_t cr0_exit_hook_address;
+
+static int write_cr0_hook_cached(struct kernel_mapping_cache* mapping,
+                                 uint64_t* cached_address,
+                                 size_t trap_frame_offset, uint64_t value)
+{
+    uint64_t hook = *cached_address;
+    if(!hook)
+    {
+        if(copy_from_trap_frame_offset_cached(&hook, trap_frame_offset,
+                                              sizeof(hook))
+        || (hook >> 48) != 0xffff)
+            return EFAULT;
+        *cached_address = hook;
+    }
+    return copy_u64_to_fixed_kernel_mapping(mapping, hook, value);
+}
+
 static int arm_cr0_fast_enter(void)
 {
-    uint64_t hook;
+    METRIC_TIME_START(start_cycles);
     uint64_t enter_stack = trap_frame + fpu_cr0_fast_enter_stack_offset;
-    if(copy_from_trap_frame_offset_cached(
-            &hook, fpu_cr0_enter_hook_ptr_offset, sizeof(hook))
-    || (hook >> 48) != 0xffff
-    || copy_u64_to_kernel(hook, enter_stack))
+    if(write_cr0_hook_cached(&s_cr0_enter_hook_mapping,
+                             &cr0_enter_hook_address,
+                             fpu_cr0_enter_hook_ptr_offset, enter_stack))
     {
         METRIC_INC(cr0_fast_enter_fallbacks);
+        METRIC_TIME(cr0_fast_enter_arm_cycles_total,
+                    cr0_fast_enter_arm_cycles_max, start_cycles);
         return EFAULT;
     }
     METRIC_INC(cr0_fast_enter_arms);
+    METRIC_TIME(cr0_fast_enter_arm_cycles_total,
+                cr0_fast_enter_arm_cycles_max, start_cycles);
     return 0;
 }
 
@@ -1000,18 +1041,22 @@ int defer_cr0_restore_checked(uint64_t cr0)
 } while(0)
     if(cr0_chain_available() && !cr0_chain_disabled)
     {
-        uint64_t hook;
+        METRIC_TIME_START(arm_start_cycles);
         uint64_t restore_stack = trap_frame + fpu_cr0_exit_stack_offset;
         if(!copy_to_trap_frame_offset_cached(fpu_cr0_deferred_offset, &cr0,
                                              sizeof(cr0))
-        && !copy_from_trap_frame_offset_cached(
-                &hook, fpu_cr0_exit_hook_ptr_offset, sizeof(hook))
-        && (hook >> 48) == 0xffff
-        && !copy_u64_to_kernel(hook, restore_stack))
+        && !write_cr0_hook_cached(&s_cr0_exit_hook_mapping,
+                                  &cr0_exit_hook_address,
+                                  fpu_cr0_exit_hook_ptr_offset,
+                                  restore_stack))
         {
             METRIC_INC(cr0_deferred_restore_arms);
+            METRIC_TIME(cr0_deferred_arm_cycles_total,
+                        cr0_deferred_arm_cycles_max, arm_start_cycles);
             RETURN_CR0_RESTORE(0);
         }
+        METRIC_TIME(cr0_deferred_arm_cycles_total,
+                    cr0_deferred_arm_cycles_max, arm_start_cycles);
     }
     METRIC_INC(cr0_deferred_restore_fallbacks);
     RETURN_CR0_RESTORE(write_cr0_checked(cr0));

@@ -406,6 +406,23 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("wrmsr_hit", metrics->wrmsr_args_mapping_hits);
     PRINT_FIELD("wrmsr_miss", metrics->wrmsr_args_mapping_misses);
     PRINT_FIELD("wrmsr_fallback", metrics->wrmsr_args_mapping_fallbacks);
+    PRINT_FIELD("cr0_enter_hook_hit", metrics->cr0_enter_hook_mapping_hits);
+    PRINT_FIELD("cr0_enter_hook_miss", metrics->cr0_enter_hook_mapping_misses);
+    PRINT_FIELD("cr0_enter_hook_fallback", metrics->cr0_enter_hook_mapping_fallbacks);
+    PRINT_FIELD("cr0_exit_hook_hit", metrics->cr0_exit_hook_mapping_hits);
+    PRINT_FIELD("cr0_exit_hook_miss", metrics->cr0_exit_hook_mapping_misses);
+    PRINT_FIELD("cr0_exit_hook_fallback", metrics->cr0_exit_hook_mapping_fallbacks);
+    tee_putc('\n');
+
+    tee_printf("cr0_hook_cycles");
+    PRINT_FIELD("enter_arm_avg", metrics->cr0_fast_enter_arms
+        ? metrics->cr0_fast_enter_arm_cycles_total
+            / metrics->cr0_fast_enter_arms : 0);
+    PRINT_FIELD("enter_arm_max", metrics->cr0_fast_enter_arm_cycles_max);
+    PRINT_FIELD("exit_arm_avg", metrics->cr0_deferred_restore_arms
+        ? metrics->cr0_deferred_arm_cycles_total
+            / metrics->cr0_deferred_restore_arms : 0);
+    PRINT_FIELD("exit_arm_max", metrics->cr0_deferred_arm_cycles_max);
     tee_putc('\n');
 
     tee_printf("obs");
