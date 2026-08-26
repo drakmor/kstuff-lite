@@ -559,6 +559,22 @@ __attribute__((noinline)) int copy_from_just_return_cached(void* dst,
                                            size);
 }
 
+static __attribute__((noinline)) int copy_rax_from_just_return_cached(
+    uint64_t* rax, uint64_t just_return)
+{
+    const size_t rax_offset = 4 * sizeof(uint64_t);
+    METRIC_TIME_START(start_cycles);
+    if(!get_cached_kernel_mapping(&s_just_return_mapping, just_return,
+                                  JUST_RETURN_MAPPING_SIZE))
+        return copy_u64_from_kernel(rax, just_return + rax_offset);
+    METRIC_INC(copy_from_calls);
+    METRIC_ADD(copy_from_bytes, sizeof(*rax));
+    copy_from_kernel_mapping(&s_just_return_mapping, rax, rax_offset,
+                             sizeof(*rax));
+    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    return 0;
+}
+
 __attribute__((noinline)) int copy_current_thread_from_pcpu_cached(uint64_t* td)
 {
     return copy_u64_from_cached_kernel_mapping(&s_pcpu_mapping,
@@ -614,14 +630,17 @@ static __attribute__((noinline)) int run_gadget_result_checked(
 
     if(result != RUN_GADGET_RESULT_NONE)
     {
-        uint64_t jr_frame[5];
-        if(copy_from_just_return_cached(jr_frame, just_return,
-                                        sizeof(jr_frame)))
-            RETURN_RUN_GADGET(EFAULT);
         if(result == RUN_GADGET_RESULT_RAX)
-            *rax = jr_frame[4];
+        {
+            if(copy_rax_from_just_return_cached(rax, just_return))
+                RETURN_RUN_GADGET(EFAULT);
+        }
         else
         {
+            uint64_t jr_frame[5];
+            if(copy_from_just_return_cached(jr_frame, just_return,
+                                            sizeof(jr_frame)))
+                RETURN_RUN_GADGET(EFAULT);
             regs[RDX] = jr_frame[2];
             regs[RCX] = jr_frame[3];
             regs[RAX] = jr_frame[4];
@@ -713,6 +732,7 @@ int write_dbgregs_checked(const uint64_t* dr)
         [RIP] = (uint64_t)cpu_switch + tail_delta,
         [CS] = 0x20,
         [EFLAGS] = 2,
+        [RAX] = 0xdeadbeefdeadbeef,
     };
     regs[RDI] = trap_frame;
     regs[R9] = trap_frame + CPU_SWITCH_RETURN_SLOT * sizeof(uint64_t);
@@ -723,7 +743,18 @@ int write_dbgregs_checked(const uint64_t* dr)
     regs[CPU_SWITCH_DR3] = dr[3];
     regs[CPU_SWITCH_DR6] = dr[4];
     regs[CPU_SWITCH_DR7] = dr[5];
-    return run_gadget_checked(regs);
+
+    /* The verified tail ends with xor eax, eax.  Poison the input above and
+     * accept only that zero as proof that the complete tail executed. */
+    uint64_t completion;
+    if(run_gadget_capture_rax_checked(regs, &completion))
+        return EFAULT;
+    if(completion)
+    {
+        METRIC_INC(run_gadget_failures);
+        return EFAULT;
+    }
+    return 0;
 }
 
 __attribute__((noinline))
