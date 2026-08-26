@@ -3,22 +3,6 @@
 #include "fakekeys.h"
 #include "shared_area.h"
 
-int has_fake_key(int key_id)
-{
-    if(key_id < 0 || key_id >= 63)
-    {
-        METRIC_INC(fake_key_has_misses);
-        return 0;
-    }
-    if(__atomic_load_n(&shared_area.ready_mask, __ATOMIC_ACQUIRE) & (1ull << key_id))
-    {
-        METRIC_INC(fake_key_has_hits);
-        return 1;
-    }
-    METRIC_INC(fake_key_has_misses);
-    return 0;
-}
-
 int register_fake_key(const uint8_t key_data[32])
 {
     uint64_t mask, mask1;

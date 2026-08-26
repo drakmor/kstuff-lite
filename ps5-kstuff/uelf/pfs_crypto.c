@@ -82,20 +82,24 @@ static int hmac_sha256_cache_entry_matches(const struct hmac_sha256_cache_entry*
 }
 
 static struct hmac_sha256_cache_entry* select_hmac_sha256_cache_entry(struct crypto_request_cache* cache,
-                                                                      int key_id, const uint8_t* key)
+                                                                      int key_id, const uint8_t* key,
+                                                                      int* matched)
 {
+    struct hmac_sha256_cache_entry* first_empty = NULL;
     for(size_t i = 0; i < PFS_HMAC_SHA256_CACHE_SLOTS; i++)
     {
         struct hmac_sha256_cache_entry* entry = &cache->hmac[i];
         if(hmac_sha256_cache_entry_matches(entry, key_id, key))
+        {
+            *matched = 1;
             return entry;
+        }
+        if(!entry->valid && !first_empty)
+            first_empty = entry;
     }
-    for(size_t i = 0; i < PFS_HMAC_SHA256_CACHE_SLOTS; i++)
-    {
-        struct hmac_sha256_cache_entry* entry = &cache->hmac[i];
-        if(!entry->valid)
-            return entry;
-    }
+    *matched = 0;
+    if(first_empty)
+        return first_empty;
     struct hmac_sha256_cache_entry* entry = &cache->hmac[cache->hmac_next_slot];
     cache->hmac_next_slot++;
     if(cache->hmac_next_slot == PFS_HMAC_SHA256_CACHE_SLOTS)
@@ -106,8 +110,10 @@ static struct hmac_sha256_cache_entry* select_hmac_sha256_cache_entry(struct cry
 static int get_hmac_sha256_cache_entry(struct crypto_request_cache* cache, int key_id, const uint8_t* key,
                                        const struct hmac_sha256_cache_entry** out)
 {
-    struct hmac_sha256_cache_entry* entry = select_hmac_sha256_cache_entry(cache, key_id, key);
-    if(hmac_sha256_cache_entry_matches(entry, key_id, key))
+    int matched;
+    struct hmac_sha256_cache_entry* entry = select_hmac_sha256_cache_entry(cache, key_id, key,
+                                                                           &matched);
+    if(matched)
     {
         METRIC_INC(hmac_cache_hits);
         *out = entry;
@@ -213,20 +219,23 @@ static int xts_key_cache_entry_matches(const struct xts_key_cache_entry* entry, 
 }
 
 static struct xts_key_cache_entry* select_xts_key_cache_entry(struct crypto_request_cache* cache, int key_id,
-                                                              const uint8_t* key)
+                                                              const uint8_t* key, int* matched)
 {
+    struct xts_key_cache_entry* first_empty = NULL;
     for(size_t i = 0; i < PFS_XTS_KEY_CACHE_SLOTS; i++)
     {
         struct xts_key_cache_entry* entry = &cache->xts[i];
         if(xts_key_cache_entry_matches(entry, key_id, key))
+        {
+            *matched = 1;
             return entry;
+        }
+        if(!entry->valid && !first_empty)
+            first_empty = entry;
     }
-    for(size_t i = 0; i < PFS_XTS_KEY_CACHE_SLOTS; i++)
-    {
-        struct xts_key_cache_entry* entry = &cache->xts[i];
-        if(!entry->valid)
-            return entry;
-    }
+    *matched = 0;
+    if(first_empty)
+        return first_empty;
     struct xts_key_cache_entry* entry = &cache->xts[cache->xts_next_slot];
     cache->xts_next_slot++;
     if(cache->xts_next_slot == PFS_XTS_KEY_CACHE_SLOTS)
@@ -237,8 +246,9 @@ static struct xts_key_cache_entry* select_xts_key_cache_entry(struct crypto_requ
 static int get_xts_key_cache_entry(struct crypto_request_cache* cache, int key_id, const uint8_t* key,
                                    const struct xts_key_cache_entry** out)
 {
-    struct xts_key_cache_entry* entry = select_xts_key_cache_entry(cache, key_id, key);
-    if(xts_key_cache_entry_matches(entry, key_id, key))
+    int matched;
+    struct xts_key_cache_entry* entry = select_xts_key_cache_entry(cache, key_id, key, &matched);
+    if(matched)
     {
         METRIC_INC(xts_cache_hits);
         *out = entry;

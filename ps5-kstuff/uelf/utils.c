@@ -115,6 +115,29 @@ int copy_to_kernel(uint64_t dst, const void* src, uint64_t sz)
     return 0;
 }
 
+#if KSTUFF_OBS
+#define METRIC_SCALAR_COPY_FROM_TIME(start) do { \
+    uint64_t _metric_elapsed = uelf_rdtsc() - (uint64_t)(start); \
+    METRIC_INC(scalar_copy_from_calls); \
+    METRIC_ADD(copy_from_cycles_total, _metric_elapsed); \
+    METRIC_MAX(copy_from_cycles_max, _metric_elapsed); \
+    METRIC_ADD(scalar_copy_from_cycles_total, _metric_elapsed); \
+    METRIC_MAX(scalar_copy_from_cycles_max, _metric_elapsed); \
+} while(0)
+
+#define METRIC_SCALAR_COPY_TO_TIME(start) do { \
+    uint64_t _metric_elapsed = uelf_rdtsc() - (uint64_t)(start); \
+    METRIC_INC(scalar_copy_to_calls); \
+    METRIC_ADD(copy_to_cycles_total, _metric_elapsed); \
+    METRIC_MAX(copy_to_cycles_max, _metric_elapsed); \
+    METRIC_ADD(scalar_copy_to_cycles_total, _metric_elapsed); \
+    METRIC_MAX(scalar_copy_to_cycles_max, _metric_elapsed); \
+} while(0)
+#else
+#define METRIC_SCALAR_COPY_FROM_TIME(start) do { } while(0)
+#define METRIC_SCALAR_COPY_TO_TIME(start) do { } while(0)
+#endif
+
 int copy_u16_from_kernel(uint16_t* dst, uint64_t src)
 {
     METRIC_TIME_START(start_cycles);
@@ -125,7 +148,7 @@ int copy_u16_from_kernel(uint16_t* dst, uint64_t src)
     {
         METRIC_INC(copy_from_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(*dst))
@@ -134,10 +157,10 @@ int copy_u16_from_kernel(uint16_t* dst, uint64_t src)
     {
         METRIC_INC(copy_from_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
         return EFAULT;
     }
-    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
     return 0;
 }
 
@@ -151,7 +174,7 @@ int copy_u32_from_kernel(uint32_t* dst, uint64_t src)
     {
         METRIC_INC(copy_from_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(*dst))
@@ -160,10 +183,10 @@ int copy_u32_from_kernel(uint32_t* dst, uint64_t src)
     {
         METRIC_INC(copy_from_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
         return EFAULT;
     }
-    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
     return 0;
 }
 
@@ -177,7 +200,7 @@ int copy_u64_from_kernel(uint64_t* dst, uint64_t src)
     {
         METRIC_INC(copy_from_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(*dst))
@@ -186,10 +209,10 @@ int copy_u64_from_kernel(uint64_t* dst, uint64_t src)
     {
         METRIC_INC(copy_from_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
         return EFAULT;
     }
-    METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
+    METRIC_SCALAR_COPY_FROM_TIME(start_cycles);
     return 0;
 }
 
@@ -203,7 +226,7 @@ int copy_u16_to_kernel(uint64_t dst, uint16_t value)
     {
         METRIC_INC(copy_to_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_TO_TIME(start_cycles);
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(value))
@@ -212,10 +235,10 @@ int copy_u16_to_kernel(uint64_t dst, uint16_t value)
     {
         METRIC_INC(copy_to_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_TO_TIME(start_cycles);
         return EFAULT;
     }
-    METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+    METRIC_SCALAR_COPY_TO_TIME(start_cycles);
     return 0;
 }
 
@@ -229,7 +252,7 @@ int copy_u32_to_kernel(uint64_t dst, uint32_t value)
     {
         METRIC_INC(copy_to_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_TO_TIME(start_cycles);
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(value))
@@ -238,10 +261,10 @@ int copy_u32_to_kernel(uint64_t dst, uint32_t value)
     {
         METRIC_INC(copy_to_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_TO_TIME(start_cycles);
         return EFAULT;
     }
-    METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+    METRIC_SCALAR_COPY_TO_TIME(start_cycles);
     return 0;
 }
 
@@ -255,7 +278,7 @@ int copy_u64_to_kernel(uint64_t dst, uint64_t value)
     {
         METRIC_INC(copy_to_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_TO_TIME(start_cycles);
         return EFAULT;
     }
     if(phys_end - phys >= sizeof(value))
@@ -264,12 +287,15 @@ int copy_u64_to_kernel(uint64_t dst, uint64_t value)
     {
         METRIC_INC(copy_to_failures);
         log_word((uint64_t)__builtin_return_address(0));
-        METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+        METRIC_SCALAR_COPY_TO_TIME(start_cycles);
         return EFAULT;
     }
-    METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
+    METRIC_SCALAR_COPY_TO_TIME(start_cycles);
     return 0;
 }
+
+#undef METRIC_SCALAR_COPY_FROM_TIME
+#undef METRIC_SCALAR_COPY_TO_TIME
 
 uint64_t yield(void);
 
@@ -277,13 +303,35 @@ struct kernel_mapping_cache
 {
     uint64_t physical_address;
     int valid;
+#if KSTUFF_OBS
+    uint64_t* hits;
+    uint64_t* misses;
+    uint64_t* fallbacks;
+#endif
 };
 
-static struct kernel_mapping_cache s_trap_frame_mapping;
-static struct kernel_mapping_cache s_just_return_mapping;
-static struct kernel_mapping_cache s_pcpu_mapping;
-static struct kernel_mapping_cache s_tss_rsp0_mapping;
-static struct kernel_mapping_cache s_wrmsr_args_mapping;
+#if KSTUFF_OBS
+#define DEFINE_MAPPING_CACHE(name, metric_prefix) \
+    static struct kernel_mapping_cache name = { \
+        .hits = &shared_area.metrics.metric_prefix##_hits, \
+        .misses = &shared_area.metrics.metric_prefix##_misses, \
+        .fallbacks = &shared_area.metrics.metric_prefix##_fallbacks, \
+    }
+#define OBSERVE_MAPPING_CACHE(cache, field) \
+    __atomic_fetch_add((cache)->field, 1, __ATOMIC_RELAXED)
+#else
+#define DEFINE_MAPPING_CACHE(name, metric_prefix) \
+    static struct kernel_mapping_cache name
+#define OBSERVE_MAPPING_CACHE(cache, field) do { (void)(cache); } while(0)
+#endif
+
+DEFINE_MAPPING_CACHE(s_trap_frame_mapping, trap_mapping);
+DEFINE_MAPPING_CACHE(s_just_return_mapping, just_return_mapping);
+DEFINE_MAPPING_CACHE(s_pcpu_mapping, pcpu_mapping);
+DEFINE_MAPPING_CACHE(s_tss_rsp0_mapping, tss_mapping);
+DEFINE_MAPPING_CACHE(s_wrmsr_args_mapping, wrmsr_args_mapping);
+
+#undef DEFINE_MAPPING_CACHE
 
 extern char tss[];
 extern uint64_t wrmsr_args;
@@ -311,12 +359,19 @@ static int get_cached_physical_address(struct kernel_mapping_cache* cache,
 {
     if(__atomic_load_n(&cache->valid, __ATOMIC_ACQUIRE))
     {
+        OBSERVE_MAPPING_CACHE(cache, hits);
         *physical_address = cache->physical_address;
         return 1;
     }
-    return initialize_kernel_mapping_cache(cache, address, size,
-                                           physical_address);
+    OBSERVE_MAPPING_CACHE(cache, misses);
+    int initialized = initialize_kernel_mapping_cache(cache, address, size,
+                                                      physical_address);
+    if(!initialized)
+        OBSERVE_MAPPING_CACHE(cache, fallbacks);
+    return initialized;
 }
+
+#undef OBSERVE_MAPPING_CACHE
 
 static __attribute__((noinline, cold)) int copy_from_kernel_uncached(
     void* dst, uint64_t src, uint64_t size)
@@ -425,18 +480,28 @@ __attribute__((noinline)) int copy_to_wrmsr_args_cached(const uint64_t args[3])
 
 __attribute__((noinline)) int run_gadget_checked(uint64_t* regs)
 {
+    METRIC_INC(run_gadget_calls);
+    METRIC_TIME_START(start_cycles);
+#define RETURN_RUN_GADGET(value) do { \
+    int _run_gadget_result = (value); \
+    if(_run_gadget_result) \
+        METRIC_INC(run_gadget_failures); \
+    METRIC_TIME(run_gadget_cycles_total, run_gadget_cycles_max, start_cycles); \
+    return _run_gadget_result; \
+} while(0)
     if(copy_to_trap_frame_cached(regs, NREGS*8))
-        return EFAULT;
+        RETURN_RUN_GADGET(EFAULT);
     uint64_t just_return = yield();
     uint64_t jr_frame[5];
     if(copy_from_trap_frame_cached(regs, NREGS*8))
-        return EFAULT;
+        RETURN_RUN_GADGET(EFAULT);
     if(copy_from_just_return_cached(jr_frame, just_return, sizeof(jr_frame)))
-        return EFAULT;
+        RETURN_RUN_GADGET(EFAULT);
     regs[RDX] = jr_frame[2];
     regs[RCX] = jr_frame[3];
     regs[RAX] = jr_frame[4];
-    return 0;
+    RETURN_RUN_GADGET(0);
+#undef RETURN_RUN_GADGET
 }
 
 extern char dr2gpr_start[];

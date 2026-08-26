@@ -131,6 +131,15 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("mailbox_unhandled", metrics->mailbox_unhandled);
     tee_putc('\n');
 
+    tee_printf("uelf_main");
+    PRINT_FIELD("entries", metrics->uelf_main_entries);
+    PRINT_FIELD("trap_read_fail", metrics->uelf_main_trap_read_failures);
+    PRINT_FIELD("jr_read_fail", metrics->uelf_main_just_return_read_failures);
+    PRINT_FIELD("trap_write_fail", metrics->uelf_main_trap_write_failures);
+    PRINT_FIELD("gadget", metrics->run_gadget_calls);
+    PRINT_FIELD("gadget_fail", metrics->run_gadget_failures);
+    tee_putc('\n');
+
     tee_printf("decrypt_regs");
     PRINT_FIELD("rax", metrics->debug_reg_decrypt_rax);
     PRINT_FIELD("rcx", metrics->debug_reg_decrypt_rcx);
@@ -198,6 +207,19 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("out_max", metrics->copy_to_cycles_max);
     tee_putc('\n');
 
+    tee_printf("optimization_cycles");
+    PRINT_FIELD("main_total", metrics->uelf_main_cycles_total);
+    PRINT_FIELD("main_max", metrics->uelf_main_cycles_max);
+    PRINT_FIELD("gadget_total", metrics->run_gadget_cycles_total);
+    PRINT_FIELD("gadget_max", metrics->run_gadget_cycles_max);
+    PRINT_FIELD("scalar_in_total", metrics->scalar_copy_from_cycles_total);
+    PRINT_FIELD("scalar_in_max", metrics->scalar_copy_from_cycles_max);
+    PRINT_FIELD("scalar_out_total", metrics->scalar_copy_to_cycles_total);
+    PRINT_FIELD("scalar_out_max", metrics->scalar_copy_to_cycles_max);
+    PRINT_FIELD("crypto_snap_total", metrics->crypto_message_snapshot_cycles_total);
+    PRINT_FIELD("crypto_snap_max", metrics->crypto_message_snapshot_cycles_max);
+    tee_putc('\n');
+
     tee_printf("fself_cache");
     PRINT_FIELD("hdr_hit", metrics->fself_header_cache_hits);
     PRINT_FIELD("hdr_miss", metrics->fself_header_cache_misses);
@@ -252,6 +274,8 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("hmac_msg", metrics->crypto_messages_hmac);
     PRINT_FIELD("other_msg", metrics->crypto_messages_other);
     PRINT_FIELD("emu_msg", metrics->crypto_emulated_messages);
+    PRINT_FIELD("snap", metrics->crypto_message_snapshot_reads);
+    PRINT_FIELD("snap_fail", metrics->crypto_message_snapshot_failures);
     tee_putc('\n');
 
     tee_printf("xts");
@@ -319,6 +343,26 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("out", metrics->copy_to_calls);
     PRINT_FIELD("out_bytes", metrics->copy_to_bytes);
     PRINT_FIELD("out_fail", metrics->copy_to_failures);
+    PRINT_FIELD("scalar_in", metrics->scalar_copy_from_calls);
+    PRINT_FIELD("scalar_out", metrics->scalar_copy_to_calls);
+    tee_putc('\n');
+
+    tee_printf("mapping_cache");
+    PRINT_FIELD("trap_hit", metrics->trap_mapping_hits);
+    PRINT_FIELD("trap_miss", metrics->trap_mapping_misses);
+    PRINT_FIELD("trap_fallback", metrics->trap_mapping_fallbacks);
+    PRINT_FIELD("jr_hit", metrics->just_return_mapping_hits);
+    PRINT_FIELD("jr_miss", metrics->just_return_mapping_misses);
+    PRINT_FIELD("jr_fallback", metrics->just_return_mapping_fallbacks);
+    PRINT_FIELD("pcpu_hit", metrics->pcpu_mapping_hits);
+    PRINT_FIELD("pcpu_miss", metrics->pcpu_mapping_misses);
+    PRINT_FIELD("pcpu_fallback", metrics->pcpu_mapping_fallbacks);
+    PRINT_FIELD("tss_hit", metrics->tss_mapping_hits);
+    PRINT_FIELD("tss_miss", metrics->tss_mapping_misses);
+    PRINT_FIELD("tss_fallback", metrics->tss_mapping_fallbacks);
+    PRINT_FIELD("wrmsr_hit", metrics->wrmsr_args_mapping_hits);
+    PRINT_FIELD("wrmsr_miss", metrics->wrmsr_args_mapping_misses);
+    PRINT_FIELD("wrmsr_fallback", metrics->wrmsr_args_mapping_fallbacks);
     tee_putc('\n');
 
     tee_printf("obs");

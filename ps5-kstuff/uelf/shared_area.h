@@ -221,6 +221,47 @@ struct kstuff_metrics
     uint64_t log_word_writes;
     uint64_t log_msg_writes;
     uint64_t log_msg_bytes;
+
+    /* Keep new metrics appended so existing field offsets remain stable. */
+    uint64_t uelf_main_entries;
+    uint64_t uelf_main_trap_read_failures;
+    uint64_t uelf_main_just_return_read_failures;
+    uint64_t uelf_main_trap_write_failures;
+    uint64_t uelf_main_cycles_total;
+    uint64_t uelf_main_cycles_max;
+
+    uint64_t run_gadget_calls;
+    uint64_t run_gadget_failures;
+    uint64_t run_gadget_cycles_total;
+    uint64_t run_gadget_cycles_max;
+
+    uint64_t scalar_copy_from_calls;
+    uint64_t scalar_copy_from_cycles_total;
+    uint64_t scalar_copy_from_cycles_max;
+    uint64_t scalar_copy_to_calls;
+    uint64_t scalar_copy_to_cycles_total;
+    uint64_t scalar_copy_to_cycles_max;
+
+    uint64_t crypto_message_snapshot_reads;
+    uint64_t crypto_message_snapshot_failures;
+    uint64_t crypto_message_snapshot_cycles_total;
+    uint64_t crypto_message_snapshot_cycles_max;
+
+    uint64_t trap_mapping_hits;
+    uint64_t trap_mapping_misses;
+    uint64_t trap_mapping_fallbacks;
+    uint64_t just_return_mapping_hits;
+    uint64_t just_return_mapping_misses;
+    uint64_t just_return_mapping_fallbacks;
+    uint64_t pcpu_mapping_hits;
+    uint64_t pcpu_mapping_misses;
+    uint64_t pcpu_mapping_fallbacks;
+    uint64_t tss_mapping_hits;
+    uint64_t tss_mapping_misses;
+    uint64_t tss_mapping_fallbacks;
+    uint64_t wrmsr_args_mapping_hits;
+    uint64_t wrmsr_args_mapping_misses;
+    uint64_t wrmsr_args_mapping_fallbacks;
 };
 
 struct kstuff_word_log_entry
@@ -299,14 +340,14 @@ extern struct shared_area_layout shared_area;
 #define METRIC_MAX(field, value) do { } while(0)
 #endif
 
-_Static_assert(sizeof(struct kstuff_metrics) == 1512, "unexpected metrics size");
+_Static_assert(sizeof(struct kstuff_metrics) == 1792, "unexpected metrics size");
 _Static_assert(sizeof(struct kstuff_word_log) == 264, "unexpected word log size");
 _Static_assert(sizeof(struct kstuff_ioctl_com_entry) == 24, "unexpected ioctl com entry size");
 _Static_assert(sizeof(struct kstuff_ioctl_com_table) == 3088, "unexpected ioctl com table size");
 _Static_assert(sizeof(struct kstuff_msg_log) == 504, "unexpected message log size");
-_Static_assert(sizeof(struct kstuff_snapshot) == 5384, "unexpected snapshot size");
+_Static_assert(sizeof(struct kstuff_snapshot) == 5664, "unexpected snapshot size");
 #if KSTUFF_OBS
-_Static_assert(sizeof(struct shared_area_layout) == 7416, "unexpected shared_area size");
+_Static_assert(sizeof(struct shared_area_layout) == 7696, "unexpected shared_area size");
 #else
 _Static_assert(sizeof(struct shared_area_layout) == 2048, "unexpected non-OBS shared_area size");
 #endif

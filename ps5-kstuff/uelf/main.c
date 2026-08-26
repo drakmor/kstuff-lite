@@ -466,17 +466,32 @@ from_userspace:
 
 void main(uint64_t just_return)
 {
+    METRIC_INC(uelf_main_entries);
+    METRIC_TIME_START(start_cycles);
+#define RETURN_UELF_MAIN() do { \
+    METRIC_TIME(uelf_main_cycles_total, uelf_main_cycles_max, start_cycles); \
+    return; \
+} while(0)
     uint64_t regs[NREGS + 1];
     if(copy_from_trap_frame_cached(regs, sizeof(regs)))
-        return;
+    {
+        METRIC_INC(uelf_main_trap_read_failures);
+        RETURN_UELF_MAIN();
+    }
     uint64_t jr_frame[5];
     if(copy_from_just_return_cached(jr_frame, just_return, sizeof(jr_frame)))
-        return;
+    {
+        METRIC_INC(uelf_main_just_return_read_failures);
+        RETURN_UELF_MAIN();
+    }
     have_error_code = jr_frame[0];
     regs[RDX] = jr_frame[2];
     regs[RCX] = jr_frame[3];
     regs[RAX] = jr_frame[4];
     intno = regs[NREGS];
     handle(regs);
-    copy_to_trap_frame_cached(regs, NREGS * sizeof(uint64_t));
+    if(copy_to_trap_frame_cached(regs, NREGS * sizeof(uint64_t)))
+        METRIC_INC(uelf_main_trap_write_failures);
+    METRIC_TIME(uelf_main_cycles_total, uelf_main_cycles_max, start_cycles);
+#undef RETURN_UELF_MAIN
 }
