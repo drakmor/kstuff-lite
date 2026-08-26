@@ -400,14 +400,18 @@ void handle_fpkg_trap(uint64_t* regs, uint32_t trapno)
 {
     if(trapno == 1)
     {
-        uint64_t frame[12];
-        if(pop_stack_checked(regs, frame, sizeof(frame)))
+        enum { FRAME_QWORDS = 12, TAIL_OFFSET_QWORDS = 7 };
+        uint64_t tail[FRAME_QWORDS - TAIL_OFFSET_QWORDS];
+        if(pop_stack_tail_checked(regs, tail,
+                                  FRAME_QWORDS * sizeof(uint64_t),
+                                  TAIL_OFFSET_QWORDS * sizeof(uint64_t),
+                                  sizeof(tail)))
             return;
-        regs[RBX] = frame[7];
-        regs[R14] = frame[8];
-        regs[R15] = frame[9];
-        regs[RBP] = frame[10];
-        regs[RIP] = frame[11];
+        regs[RBX] = tail[0];
+        regs[R14] = tail[1];
+        regs[R15] = tail[2];
+        regs[RBP] = tail[3];
+        regs[RIP] = tail[4];
         regs[RAX] = 0;
     }
 }

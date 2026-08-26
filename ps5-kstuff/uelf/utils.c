@@ -452,13 +452,17 @@ void handle_utils_trap(uint64_t* regs, uint32_t trapno)
 {
     if(trapno == 1)
     {
-        uint64_t stack_frame[12];
-        if(peek_stack_checked(regs, stack_frame, sizeof(stack_frame)))
+        enum { FRAME_QWORDS = 12, TAIL_OFFSET_QWORDS = 3 };
+        uint64_t tail[FRAME_QWORDS - TAIL_OFFSET_QWORDS];
+        if(peek_stack_tail_checked(regs, tail,
+                                   FRAME_QWORDS * sizeof(uint64_t),
+                                   TAIL_OFFSET_QWORDS * sizeof(uint64_t),
+                                   sizeof(tail)))
             return;
-        if(restore_dbgregs_state_checked(stack_frame+5, stack_frame[3]))
+        if(restore_dbgregs_state_checked(tail+2, tail[0]))
             return;
-        regs[RSP] += sizeof(stack_frame);
-        regs[RIP] = stack_frame[11];
+        regs[RSP] += FRAME_QWORDS * sizeof(uint64_t);
+        regs[RIP] = tail[8];
         finish_npdrm_ioctl_state();
         observe_current_syscall_finish();
     }

@@ -92,6 +92,25 @@ static inline int peek_stack_checked(const uint64_t* regs, void* data, size_t sz
     return copy_from_kernel(data, regs[RSP], sz);
 }
 
+static inline int peek_stack_tail_checked(const uint64_t* regs, void* data,
+                                          size_t frame_sz, size_t tail_offset,
+                                          size_t tail_sz)
+{
+    if(tail_offset > frame_sz || tail_sz > frame_sz - tail_offset)
+        return 1;
+    return copy_from_kernel(data, regs[RSP] + tail_offset, tail_sz);
+}
+
+static inline int pop_stack_tail_checked(uint64_t* regs, void* data,
+                                         size_t frame_sz, size_t tail_offset,
+                                         size_t tail_sz)
+{
+    if(peek_stack_tail_checked(regs, data, frame_sz, tail_offset, tail_sz))
+        return 1;
+    regs[RSP] += frame_sz;
+    return 0;
+}
+
 static inline uint64_t get_pcb_field_ptr(uint64_t pcb, uint64_t field_offset)
 {
     return pcb + field_offset + (FWVER >= 0x1000 ? 0x10 : 0);

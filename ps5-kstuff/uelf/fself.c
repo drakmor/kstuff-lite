@@ -342,9 +342,9 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
             uint64_t request[8];
             if(copy_from_kernel(request, regs[RDX], sizeof(request)))
                 RETURN_FSELF_MAILBOX(0);
-            if(pop_stack_checked(regs, &regs[RIP], 8))
-                RETURN_FSELF_MAILBOX(0);
             memcpy(DMEM+request[1], DMEM+request[2], (uint32_t)request[6]);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = lr;
             regs[RAX] = 0;
             METRIC_INC(fself_mailbox_decrypt_self_block_emulated);
             emulated = 1;
@@ -371,11 +371,11 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
             uint64_t request[8];
             if(copy_from_kernel(request, regs[RDX], sizeof(request)))
                 RETURN_FSELF_MAILBOX(0);
-            if(pop_stack_checked(regs, &regs[RIP], 8))
-                RETURN_FSELF_MAILBOX(0);
             uint64_t* src = (uint64_t*)(DMEM + request[1]);
             uint64_t* dst = (uint64_t*)(DMEM + request[2]);
             copy_decrypted_self_blocks(DMEM, src, dst, request[5]);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = lr;
             regs[RAX] = 0;
             METRIC_INC(fself_mailbox_decrypt_multiple_self_blocks_emulated);
             emulated = 1;
@@ -452,8 +452,8 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
             ctx = regs[RBX];
         if(get_context_fself_info(ctx, 0, 0, 0, 0))
         {
-            if(pop_stack_checked(regs, &regs[RIP], 8))
-                RETURN_FSELF_MAILBOX(0);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = lr;
             regs[RAX] = 0;
             METRIC_INC(fself_mailbox_load_self_segment_emulated);
             emulated = 1;

@@ -67,15 +67,20 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
     if(allow_kekcall && IS_PPR(getppid))
     {
         METRIC_INC(syscall_kekcall_dispatches);
-        uint64_t args[NREGS] = {0};
-        copy_from_kernel(args, kpeek64(regs[RDI]+td_frame), sizeof(args));
+        _Static_assert(RAX == 6, "kekcall argument prefix must end at RAX");
+        uint64_t args[RAX + 1];
+        uint64_t frame;
+        if(kpeek64_checked(regs[RDI] + td_frame, &frame)
+        || copy_from_kernel(args, frame, sizeof(args)))
+            RETURN_HANDLE_SYSCALL();
         int err = handle_kekcall(regs, args, args[RAX]>>32);
         if(err != ENOSYS)
         {
-            if(!err)
-                kpoke64(regs[RDI]+td_retval, args[RAX]);
+            if(!err && copy_u64_to_kernel(regs[RDI] + td_retval, args[RAX]))
+                err = EFAULT;
             regs[RAX] = err;
-            pop_stack_checked(regs, &regs[RIP], 8);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = (uint64_t)syscall_after;
         }
 
         RETURN_HANDLE_SYSCALL();
