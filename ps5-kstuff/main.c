@@ -811,6 +811,7 @@ static uint64_t get_fpusave_capture(uint64_t fwver)
     case 0x403: return kdata_base - 0x52e24c;
     case 0x761: return kdata_base - 0x54982c;
     case 0x940: return kdata_base - 0x56b3cc;
+    case 0x1360: return kdata_base - 0x57efbc;
     default: return 1;
     }
 }
@@ -864,6 +865,13 @@ static uint64_t get_fpusave_capture(uint64_t fwver)
  * TODO(FW_PORT): add the four helpers below as one atomic firmware set.  The
  * currently unlisted firmwares deliberately receive sentinel 1 and use the
  * checked legacy path; never enable a partial set.
+ *
+ * 13.60 was verified against the executable image with IDA kdata anchor
+ * 0xffffffff80ec0000.  The selected entry points are:
+ *   capture     0xffffffff804627f3
+ *   load        0xffffffff804c3bd4  (48 8b 47 58 5d c3)
+ *   clear/store 0xffffffff8090812d  (jumps to mov [rsi],rax; pop rbp; ret)
+ *   write       0xffffffff8094167d  (0f 22 c0 5d c3)
  */
 static uint64_t get_cr0_capture(uint64_t fwver)
 {
@@ -873,6 +881,7 @@ static uint64_t get_cr0_capture(uint64_t fwver)
     case 0x403: return kdata_base - 0x9d68ed;
     case 0x761: return kdata_base - 0xa1246d;
     case 0x940: return kdata_base - 0xa59b2d;
+    case 0x1360: return kdata_base - 0xa5d80d;
     default: return 1;
     }
 }
@@ -885,6 +894,7 @@ static uint64_t get_cr0_load(uint64_t fwver)
     case 0x403: return kdata_base - 0x92333c;
     case 0x761: return kdata_base - 0x95cf3c;
     case 0x940: return kdata_base - 0x9a646c;
+    case 0x1360: return kdata_base - 0x9fc42c;
     default: return 1;
     }
 }
@@ -897,6 +907,7 @@ static uint64_t get_cr0_clear_store(uint64_t fwver)
     case 0x403: return kdata_base - 0x566b70;
     case 0x761: return kdata_base - 0x582ed5;
     case 0x940: return kdata_base - 0x5a3905;
+    case 0x1360: return kdata_base - 0x5b7ed3;
     default: return 1;
     }
 }
@@ -909,6 +920,7 @@ static uint64_t get_cr0_write_ret(uint64_t fwver)
     case 0x403: return kdata_base - 0x52dc13;
     case 0x761: return kdata_base - 0x549203;
     case 0x940: return kdata_base - 0x56ada3;
+    case 0x1360: return kdata_base - 0x57e983;
     default: return 1;
     }
 }

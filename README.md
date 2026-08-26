@@ -17,7 +17,9 @@ adding firmware 2.50 support.
 - A single-transition debug-register restore and skipped hardware snapshots
   when the current thread does not own active debug registers.
 - A validated, normally fault-free CR0 save/TS-clear chain for 2.50, 4.03,
-  7.61, and 9.40.
+  7.61, and 9.40. The small in-code 13.60 gadget offsets are verified against
+  its executable kernel image, but complete 13.60 support still requires the
+  prosper0gdb and SceShellCore tables.
 - Fast CR0 entry through a one-shot KELF continuation and deferred CR0 restore
   at the final KELF exit.
 - Runtime selection between `XSAVEC` and `XSAVE`, with one-time CPUID/XCR0
