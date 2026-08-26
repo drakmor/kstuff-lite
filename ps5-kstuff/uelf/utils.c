@@ -301,7 +301,8 @@ uint64_t yield(void);
 
 struct kernel_mapping_cache
 {
-    uint64_t physical_address;
+    uint64_t physical_address[2];
+    uint64_t first_segment_size;
     int valid;
 #if KSTUFF_OBS
     uint64_t* hits;
@@ -338,34 +339,46 @@ extern uint64_t wrmsr_args;
 
 /* These addresses belong to the per-CPU KELF and stay fixed for its lifetime. */
 static __attribute__((noinline)) int initialize_kernel_mapping_cache(
-    struct kernel_mapping_cache* cache, uint64_t address, uint64_t size,
-    uint64_t* physical_address)
+    struct kernel_mapping_cache* cache, uint64_t address, uint64_t size)
 {
     uint64_t physical_limit;
-    if(!virt2phys(address, physical_address, &physical_limit))
+    uint64_t physical_address;
+    if(!virt2phys(address, &physical_address, &physical_limit))
         return 0;
-    if(*physical_address > physical_limit
-    || size > physical_limit - *physical_address)
+    if(physical_address >= physical_limit)
         return 0;
 
-    cache->physical_address = *physical_address;
+    uint64_t first_segment_size = physical_limit - physical_address;
+    if(first_segment_size > size)
+        first_segment_size = size;
+    cache->physical_address[0] = physical_address;
+    cache->first_segment_size = first_segment_size;
+
+    if(first_segment_size < size)
+    {
+        uint64_t second_limit;
+        if(!virt2phys(address + first_segment_size,
+                      &cache->physical_address[1], &second_limit)
+        || cache->physical_address[1] >= second_limit
+        || size - first_segment_size
+            > second_limit - cache->physical_address[1])
+            return 0;
+    }
+
     __atomic_store_n(&cache->valid, 1, __ATOMIC_RELEASE);
     return 1;
 }
 
-static int get_cached_physical_address(struct kernel_mapping_cache* cache,
-                                       uint64_t address, uint64_t size,
-                                       uint64_t* physical_address)
+static int get_cached_kernel_mapping(struct kernel_mapping_cache* cache,
+                                     uint64_t address, uint64_t size)
 {
     if(__atomic_load_n(&cache->valid, __ATOMIC_ACQUIRE))
     {
         OBSERVE_MAPPING_CACHE(cache, hits);
-        *physical_address = cache->physical_address;
         return 1;
     }
     OBSERVE_MAPPING_CACHE(cache, misses);
-    int initialized = initialize_kernel_mapping_cache(cache, address, size,
-                                                      physical_address);
+    int initialized = initialize_kernel_mapping_cache(cache, address, size);
     if(!initialized)
         OBSERVE_MAPPING_CACHE(cache, fallbacks);
     return initialized;
@@ -385,18 +398,59 @@ static __attribute__((noinline, cold)) int copy_to_kernel_uncached(
     return copy_to_kernel(dst, src, size);
 }
 
+static void copy_from_kernel_mapping(const struct kernel_mapping_cache* cache,
+                                     void* dst, uint64_t offset, uint64_t size)
+{
+    uint64_t first_size = 0;
+    if(offset < cache->first_segment_size)
+    {
+        first_size = cache->first_segment_size - offset;
+        if(first_size > size)
+            first_size = size;
+        memcpy(dst, DMEM + cache->physical_address[0] + offset, first_size);
+    }
+    if(first_size < size)
+    {
+        uint64_t second_offset = offset + first_size
+                               - cache->first_segment_size;
+        memcpy((char*)dst + first_size,
+               DMEM + cache->physical_address[1] + second_offset,
+               size - first_size);
+    }
+}
+
+static void copy_to_kernel_mapping(const struct kernel_mapping_cache* cache,
+                                   uint64_t offset, const void* src,
+                                   uint64_t size)
+{
+    uint64_t first_size = 0;
+    if(offset < cache->first_segment_size)
+    {
+        first_size = cache->first_segment_size - offset;
+        if(first_size > size)
+            first_size = size;
+        memcpy(DMEM + cache->physical_address[0] + offset, src, first_size);
+    }
+    if(first_size < size)
+    {
+        uint64_t second_offset = offset + first_size
+                               - cache->first_segment_size;
+        memcpy(DMEM + cache->physical_address[1] + second_offset,
+               (const char*)src + first_size, size - first_size);
+    }
+}
+
 static __attribute__((noinline)) int copy_from_cached_kernel_mapping(
     struct kernel_mapping_cache* cache, void* dst, uint64_t src,
     uint64_t mapping_size, uint64_t size)
 {
     METRIC_TIME_START(start_cycles);
-    uint64_t physical_address;
     if(size > mapping_size
-    || !get_cached_physical_address(cache, src, mapping_size, &physical_address))
+    || !get_cached_kernel_mapping(cache, src, mapping_size))
         return copy_from_kernel_uncached(dst, src, size);
     METRIC_INC(copy_from_calls);
     METRIC_ADD(copy_from_bytes, size);
-    memcpy(dst, DMEM + physical_address, size);
+    copy_from_kernel_mapping(cache, dst, 0, size);
     METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
     return 0;
 }
@@ -406,13 +460,12 @@ static __attribute__((noinline)) int copy_to_cached_kernel_mapping(
     uint64_t mapping_size, uint64_t size)
 {
     METRIC_TIME_START(start_cycles);
-    uint64_t physical_address;
     if(size > mapping_size
-    || !get_cached_physical_address(cache, dst, mapping_size, &physical_address))
+    || !get_cached_kernel_mapping(cache, dst, mapping_size))
         return copy_to_kernel_uncached(dst, src, size);
     METRIC_INC(copy_to_calls);
     METRIC_ADD(copy_to_bytes, size);
-    memcpy(DMEM + physical_address, src, size);
+    copy_to_kernel_mapping(cache, 0, src, size);
     METRIC_TIME(copy_to_cycles_total, copy_to_cycles_max, start_cycles);
     return 0;
 }
@@ -421,13 +474,11 @@ static __attribute__((noinline)) int copy_u64_from_cached_kernel_mapping(
     struct kernel_mapping_cache* cache, uint64_t src, uint64_t* value)
 {
     METRIC_TIME_START(start_cycles);
-    uint64_t physical_address;
-    if(!get_cached_physical_address(cache, src, sizeof(*value),
-                                    &physical_address))
+    if(!get_cached_kernel_mapping(cache, src, sizeof(*value)))
         return copy_u64_from_kernel(value, src);
     METRIC_INC(copy_from_calls);
     METRIC_ADD(copy_from_bytes, sizeof(*value));
-    __builtin_memcpy(value, DMEM + physical_address, sizeof(*value));
+    copy_from_kernel_mapping(cache, value, 0, sizeof(*value));
     METRIC_TIME(copy_from_cycles_total, copy_from_cycles_max, start_cycles);
     return 0;
 }
@@ -456,14 +507,12 @@ static __attribute__((noinline)) int copy_from_trap_frame_offset_cached(
     if(offset > TRAP_FRAME_MAPPING_SIZE
     || size > TRAP_FRAME_MAPPING_SIZE - offset)
         return EFAULT;
-    uint64_t physical_address;
-    if(!get_cached_physical_address(&s_trap_frame_mapping, trap_frame,
-                                    TRAP_FRAME_MAPPING_SIZE,
-                                    &physical_address))
+    if(!get_cached_kernel_mapping(&s_trap_frame_mapping, trap_frame,
+                                  TRAP_FRAME_MAPPING_SIZE))
         return copy_from_kernel_uncached(dst, trap_frame + offset, size);
     METRIC_INC(copy_from_calls);
     METRIC_ADD(copy_from_bytes, size);
-    memcpy(dst, DMEM + physical_address + offset, size);
+    copy_from_kernel_mapping(&s_trap_frame_mapping, dst, offset, size);
     return 0;
 }
 
@@ -473,14 +522,12 @@ static __attribute__((noinline)) int copy_to_trap_frame_offset_cached(
     if(offset > TRAP_FRAME_MAPPING_SIZE
     || size > TRAP_FRAME_MAPPING_SIZE - offset)
         return EFAULT;
-    uint64_t physical_address;
-    if(!get_cached_physical_address(&s_trap_frame_mapping, trap_frame,
-                                    TRAP_FRAME_MAPPING_SIZE,
-                                    &physical_address))
+    if(!get_cached_kernel_mapping(&s_trap_frame_mapping, trap_frame,
+                                  TRAP_FRAME_MAPPING_SIZE))
         return copy_to_kernel_uncached(trap_frame + offset, src, size);
     METRIC_INC(copy_to_calls);
     METRIC_ADD(copy_to_bytes, size);
-    memcpy(DMEM + physical_address + offset, src, size);
+    copy_to_kernel_mapping(&s_trap_frame_mapping, offset, src, size);
     return 0;
 }
 
