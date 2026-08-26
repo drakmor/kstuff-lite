@@ -270,6 +270,7 @@ static void* hammer_thread(uint64_t* arg)
             target[3] = 0x3b;
         }
     }
+    __builtin_unreachable();
 }
 
 static void jmp_setcontext(uint64_t pc)
@@ -1455,6 +1456,7 @@ static void* other_thread_fn(void* arg)
     //((int(*)())dlsym((void*)0x1, "sceKernelSleep"))(10000000);
     for(;;)
         asm volatile("");
+    __builtin_unreachable();
 }
 
 static int set_user_gsbase(uint64_t base) 
@@ -1507,7 +1509,7 @@ static void trace_find_syscall_cfi_table_jmp_int3_addr(uint64_t* regs)
     // some fws have a `mov     rax, gs:0` as the first instruction
     // set user gsbase, its not used anyway
     if (set_user_gsbase(kstack - 0x2000)) {
-        return 0;
+        return;
     }
     
     if (regs[0] == offsets.syscall_before)
