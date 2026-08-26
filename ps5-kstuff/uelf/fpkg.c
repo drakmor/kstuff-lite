@@ -218,6 +218,12 @@ static int handle_crypto_request(uint64_t* regs)
     int fpu_entered = 0;
     METRIC_INC(crypto_requests_total);
 
+    /*
+     * TODO(FW_PORT): at sceSblServiceCryptAsync's trap/call site, trace the
+     * linked-list head argument into the saved register frame and update this
+     * selection for the new firmware.  Validate it by walking several message
+     * chains read-only before enabling emulation.
+     */
     uint64_t start = (FWVER >= 0x800) ? regs[RBX] : regs[R14];
 
     for (uint64_t msg = start; msg && !total_status;)

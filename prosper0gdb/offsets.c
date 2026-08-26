@@ -11,6 +11,12 @@ extern uint64_t kdata_base;
 #define START_FW(fw) void set_offsets_ ## fw(void) {
 #define END_FW() }
 
+/*
+ * TODO(FW_PORT): add offsets/<major>_<minor>.h here for every new firmware.
+ * Start from the nearest table only as a list of symbols; every address must
+ * be re-derived from that firmware's executable kernel image and expressed
+ * relative to the same kdata anchor passed by elfldr.
+ */
 #include "offsets/3_00.h"
 #include "offsets/3_10.h"
 #include "offsets/3_20.h"
@@ -67,6 +73,7 @@ int set_offsets(void)
     switch(ver)
     {
 #ifndef NO_BUILTIN_OFFSETS
+    /* TODO(FW_PORT): register the new set_offsets_<fw>() table here too. */
     case 0x250: set_offsets_250(); break;
     case 0x300: set_offsets_300(); break;
     case 0x310: set_offsets_310(); break;

@@ -1657,6 +1657,10 @@ int r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     }
     kdata_base = d;
     /*
+     * TODO(FW_PORT): verify what anchor the new elfldr passes and what anchor
+     * was used to produce its prosper0gdb offsets.  Add an explicit firmware
+     * correction here only when those two verified addresses differ.
+     *
      * The 2.50 elfldr ABI reports the SDK data anchor, while the 2.50
      * prosper0gdb table was produced relative to the kernel image's older
      * kdata anchor.  They differ by 0x1010000.  Firmware 3.00+ uses the same

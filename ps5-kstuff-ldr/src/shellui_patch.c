@@ -33,6 +33,11 @@
     }
 
 static unsigned long vmspace_pmap(unsigned long vmspace_kaddr) {
+    /*
+     * TODO(FW_PORT): verify vmspace->vm_pmap in the new kernel before
+     * extending these ranges.  Find kernel functions which load p_vmspace and
+     * then address the embedded pmap; confirm pm_pml4/pm_cr3 remain at +0x20.
+     */
     switch (kernel_get_fw_version() >> 16) {
         case 0x100 ... 0x102: return vmspace_kaddr + 0x2C0;
         case 0x105 ... 0x550: return vmspace_kaddr + 0x2E0;

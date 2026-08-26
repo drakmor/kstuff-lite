@@ -423,6 +423,11 @@ from_userspace:
     }
     else if(regs[RIP] == (uint64_t)syscall_before)
     {
+        /*
+         * TODO(FW_PORT): derive the syscall entry stack layout from the new
+         * kernel's syscall_before path.  Confirm both syscall_rsp_to_rsi and
+         * the 10.00+ extra 0x10 bytes before extending this version rule.
+         */
         const uint64_t syscall_extra = (FWVER >= 0x1000 ? 0x10 : 0);
         uint64_t syscall_target;
         regs[RAX] |= 0xffffull << 48;

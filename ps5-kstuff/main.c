@@ -162,6 +162,12 @@ static void* kmalloc(size_t sz)
 
 #define NCPUS 16
 #define IDT (offsets.idt)
+/*
+ * TODO(FW_PORT): verify GDT/TSS array stride, CPU count, PCPU stride, and the
+ * IST slot offsets on the new firmware.  Derive them from the per-CPU setup
+ * code and confirm all populated entries, rather than extending the >= 7.00
+ * assumption from one sample.
+ */
 #define GDT(i) (offsets.gdt_array+0x68*(i))
 #define TSS(i) (offsets.tss_array+0x68*(i))
 #define PCPU(i, fwver) ((fwver >= 0x700) ? (offsets.pcpu_array+0x980*(i)) : (offsets.pcpu_array+0x900*(i)))
@@ -363,7 +369,11 @@ int get_proc_cr3(uint64_t pid, uint64_t* cr3, uint64_t* dmap_base)
     if(proc == 0)
         return -1;
     uint64_t vmspace = kread8(proc + 0x200);
-    // TODO: i dont know when this shifted, may be an earlier fw, also, add this to offsets.c? 
+    /*
+     * TODO(FW_PORT): verify vmspace->vm_pmap for the new firmware from the
+     * kernel's vmspace/pmap accessors.  Add a new explicit range (or move this
+     * into the offset table) if it is neither 0x2e0 nor 0x2e8.
+     */
     uint32_t fwver = r0gdb_get_fw_version() >> 16;
     uint32_t vmspace_pmap_offset = (fwver >= 0x600) ? 0x2E8 : 0x2E0;
     uint64_t ptrs[2] = {0};
@@ -513,6 +523,12 @@ struct shellcore_patch
     size_t sz;
 };
 
+/*
+ * TODO(FW_PORT): add shellcore_patches/<major>_<minor>.h here after deriving
+ * every patch from that exact SceShellCore build.  Patch offsets are relative
+ * to the module image; verify original bytes and the retail/testkit/devkit
+ * variants before enabling the firmware.
+ */
 #include "shellcore_patches/2_50.h"
 #include "shellcore_patches/3_00.h"
 #include "shellcore_patches/3_10.h"
@@ -662,6 +678,7 @@ enum kit_type kit = get_kit_type();
     struct shellcore_patch* patches;
     switch(ver)
     {
+    /* TODO(FW_PORT): add FW(<version>) after including its verified table. */
     FW(250);
     FW(300);
     FW(310);
@@ -777,6 +794,14 @@ uint64_t bench(void)
  * Value 1 is an explicit unavailable sentinel.  It must remain nonzero
  * because values[] is zero-terminated; UELF detects it and uses the original
  * read_cr0_checked() + write_cr0_checked() implementation.
+ *
+ * TODO(FW_PORT): remaining firmwares need their own fpusave_capture entry.
+ * In the executable kernel search for
+ *   0f 20 c1 0f 06 83 3d ?? ?? ?? ?? 00
+ * and select the entry at "mov rcx,cr0; clts".  Disassemble through both the
+ * XSAVE and FXSAVE branches, record their exact RIP deltas in uelf/utils.c,
+ * and first test with KSTUFF_OBS.  Return 1 until the entry and both trap RIPs
+ * have been verified.
  */
 static uint64_t get_fpusave_capture(uint64_t fwver)
 {
@@ -835,6 +860,10 @@ static uint64_t get_fpusave_capture(uint64_t fwver)
  *     traffic that cr0_chain_enter/exit increase, cr0_chain_fail stays zero,
  *     and cr0_rc_fallback stays zero.  A failed chain is disabled at runtime,
  *     but first-use testing can still be fatal if an entry point is wrong.
+ *
+ * TODO(FW_PORT): add the four helpers below as one atomic firmware set.  The
+ * currently unlisted firmwares deliberately receive sentinel 1 and use the
+ * checked legacy path; never enable a partial set.
  */
 static uint64_t get_cr0_capture(uint64_t fwver)
 {
@@ -884,7 +913,16 @@ static uint64_t get_cr0_write_ret(uint64_t fwver)
     }
 }
 
-/* Scalar KELF writer: mov [rdi], rax; [pop rbp;] ret. */
+/*
+ * Scalar KELF writer: mov [rdi], rax; [pop rbp;] ret.
+ *
+ * TODO(FW_PORT): validate offsets.cpu_switch-0x1ee on every newly added
+ * firmware.  Search executable kernel bytes for either "48 89 07 c3" or
+ * "48 89 07 5d c3", then disassemble from the MOV and require exactly
+ * [RDI]=RAX followed by RET or POP RBP; RET, with no RSP adjustment or other
+ * clobber that KELF does not model.  If the historical cpu_switch-relative
+ * address is not that gadget, add an explicit case as done for 13.60.
+ */
 static uint64_t get_store_rax_rdi(uint64_t fwver)
 {
     switch(fwver)

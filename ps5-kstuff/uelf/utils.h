@@ -135,12 +135,21 @@ static inline int pop_stack_tail_checked(uint64_t* regs, void* data,
 
 static inline uint64_t get_pcb_field_ptr(uint64_t pcb, uint64_t field_offset)
 {
+    /*
+     * TODO(FW_PORT): verify the PCB insertion introduced at 10.00 and update
+     * this rule only after checking pcb_fsbase, pcb_gsbase, pcb_flags and the
+     * debug-register save area in the new kernel's cpu_switch code.
+     */
     return pcb + field_offset + (FWVER >= 0x1000 ? 0x10 : 0);
 }
 
 static inline uint64_t get_pcb_flags_ptr(uint64_t pcb)
 {
-    /* 2.50 uses the older PCB layout; pcb_flags moved to 0x100 in 3.00+. */
+    /*
+     * TODO(FW_PORT): confirm pcb_flags for any firmware outside the verified
+     * 2.50 and 3.00+ layouts before enabling debug-register ownership writes.
+     * 2.50 uses the older PCB layout; pcb_flags moved to 0x100 in 3.00+.
+     */
     if(FWVER == 0x250)
         return pcb + pcb_flags_250;
     return get_pcb_field_ptr(pcb, pcb_flags);

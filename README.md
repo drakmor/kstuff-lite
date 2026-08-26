@@ -189,11 +189,55 @@ and should not be used as release-performance numbers.
 
 ## Firmware porting notes
 
+All code locations which must be audited for a new firmware carry the literal
+marker `TODO(FW_PORT)`. List them before starting a port:
+
+```sh
+rg 'TODO\(FW_PORT\)' prosper0gdb ps5-kstuff ps5-kstuff-ldr
+```
+
+The required audit is broader than adding one kernel offset file:
+
+- create and register `prosper0gdb/offsets/<fw>.h`, resolving every item in
+  `offset_list.txt` against the exact executable kernel image;
+- create, include, and register the matching SceShellCore retail/testkit/devkit
+  patch table, checking original bytes at every patch site;
+- verify the elfldr/kdata anchor, PCPU/GDT/TSS/PCB layouts, `vmspace->vm_pmap`,
+  syscall frame, FSELF mailbox frame, FPKG message-head register, and mini
+  syscore header size;
+- add the optional CR0/FPU fast-path gadgets only after their complete
+  contracts have been verified. Unsupported optional gadgets must remain the
+  nonzero sentinel `1`, which selects the checked legacy path.
+
 CR0 fast-path offsets are firmware-specific and must not be copied from a
 nearby version. `ps5-kstuff/main.c` contains the complete search and validation
 procedure for `cr0_capture`, `cr0_load`, `cr0_clear_store`, and
 `cr0_write_ret`, including byte-pattern seeds and the IDA-to-runtime address
 conversion.
+
+For each currently unlisted firmware, search executable/XO kernel code in IDA
+for these seeds, then validate the entire basic block and epilogue:
+
+- `fpusave_capture`: `0f 20 c1 0f 06 83 3d ?? ?? ?? ?? 00`, entering at
+  `mov rcx,cr0; clts`; independently record the following XSAVE and FXSAVE RIPs;
+- `cr0_capture`: `0f 20 c0 48 89 47 58`, requiring
+  `[rdi+0x58] = CR0`;
+- `cr0_load`: `48 8b 47 58`, requiring `rax = [rdi+0x58]`;
+- `cr0_clear_store`: search from `and rax,-9` (`48 83 e0 f7`) to the store
+  through RSI, requiring `rax &= ~CR0_TS` and `[rsi] = rax`;
+- `cr0_write_ret`: `0f 22 c0`, requiring `CR0 = rax` followed by either `ret`
+  or `pop rbp; ret`;
+- `store_rax_rdi`: `48 89 07 c3` or `48 89 07 5d c3`, requiring only
+  `[rdi] = rax` and the supported epilogue;
+- the `cpu_switch` debug-register tail: find the sequence restoring
+  DR0/DR1/DR2/DR3/DR6/DR7 from PCB offsets and select the entry which reaches
+  the final `xor eax,eax`; the zero return is its completion marker.
+
+Convert an IDA address using the same anchor as its prosper0gdb table:
+
+```text
+runtime = kdata_base + (gadget_ea - ida_kdata_anchor_ea)
+```
 
 The normal CR0-enter path does not execute the remainder of the large
 `cr0_capture` helper. KELF single-steps the already verified `mov_rax_cr0`

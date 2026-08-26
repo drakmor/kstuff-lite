@@ -294,6 +294,7 @@ void handle_fself_trap(uint64_t* regs, uint32_t trapno)
         uint64_t self_header;
         if(peek_stack_checked(regs, fself_header_backup, sizeof(fself_header_backup)))
             return;
+        /* TODO(FW_PORT): verify the SELF context register at this trap RIP. */
         if(kpeek64_checked(regs[(FWVER >= 0x800) ? RBX : R14] + 56, &self_header))
             return;
         if(copy_to_kernel(self_header, fself_header_backup + 40, mini_syscore_header_size))
@@ -317,6 +318,11 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     {
         METRIC_INC(fself_mailbox_decrypt_self_block);
         uint64_t ctx;
+        /*
+         * TODO(FW_PORT): recover ctx from the new mailbox caller at this LR.
+         * Use the decompiler plus stack-frame disassembly to identify the
+         * context argument; do not extend a version range by proximity.
+         */
         if(FWVER >= 0x800)
             ctx = regs[R12];
         else if(FWVER >= 0x500 && FWVER <= 0x761)
@@ -344,6 +350,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     {
         METRIC_INC(fself_mailbox_decrypt_multiple_self_blocks);
         uint64_t ctx;
+        /* TODO(FW_PORT): verify the ctx register/stack slot at this exact LR. */
         if(FWVER >= 0x600)
         {
             if(kpeek64_checked(regs[RBP] - 208, &ctx))
@@ -374,6 +381,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     else if(lr == (uint64_t)sceSblServiceMailbox_lr_verifyHeader)
     {
         METRIC_INC(fself_mailbox_verify_header);
+        /* TODO(FW_PORT): verify which preserved register owns self_context. */
         uint64_t self_context = regs[(FWVER >= 0x800) ? RBX : R14];
         uint64_t ctx_data[8];
         uint64_t self_header;
@@ -426,6 +434,10 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     {
         METRIC_INC(fself_mailbox_load_self_segment);
         uint64_t ctx;
+        /*
+         * TODO(FW_PORT): derive the loadSelfSegment context location from the
+         * new caller at sceSblServiceMailbox_lr_loadSelfSegment.
+         */
         if(FWVER >= 0x1000)
         {
             if(kpeek64_checked(regs[RBP] - 232, &ctx))
@@ -471,6 +483,7 @@ int try_handle_fself_trap(uint64_t* regs)
         uint64_t frame[4];
         if(copy_from_kernel(frame, regs[RSP], sizeof(frame)))
             RETURN_FSELF_TRAP(FSELF_HANDLE_HANDLED);
+        /* TODO(FW_PORT): verify the watchpoint's destination register. */
         regs[(FWVER >= 0x800) ? RAX : R10] |= 0xffffull << 48;
         if(frame[3] == (uint64_t)loadSelfSegment_watchpoint_lr)
         {

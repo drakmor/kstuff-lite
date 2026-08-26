@@ -726,6 +726,12 @@ int write_dbgregs_checked(const uint64_t* dr)
      * This is the common cpu_switch tail which restores all six debug
      * registers from pcb offsets 0x78..0xa0.  2.50 has the older function
      * layout; every supported 3.00+ offset table has the newer layout.
+     *
+     * TODO(FW_PORT): for a new firmware, disassemble offsets.cpu_switch and
+     * find the tail which loads DR0/DR1/DR2/DR3/DR6/DR7 from the PCB, follows
+     * the expected register/stack epilogue, and ends with xor eax,eax.  Add an
+     * explicit firmware delta if it is not +0x874; RAX=0 is the completion
+     * marker and must remain true at the selected return.
      */
     const uint64_t tail_delta = FWVER == 0x250 ? 0x704 : 0x874;
     uint64_t regs[NREGS] = {
@@ -1018,6 +1024,9 @@ int read_cr0_clear_ts_checked(uint64_t* cr0)
      *
      * 2.50 uses the older helper layout.  The verified 4.03, 7.61 and 9.40
      * helpers share the newer FXSAVE offset; XSAVE is at +0x1c in both.
+     * TODO(FW_PORT): when adding fpusave_capture for another firmware,
+     * disassemble both feature branches from that exact entry and add their
+     * post-fault RIP deltas here instead of assuming +0x1c/+0x21.
      */
     const uint64_t expected_xsave_rip = (uint64_t)fpusave_capture + 0x1c;
     const uint64_t expected_fxsave_rip = (uint64_t)fpusave_capture
