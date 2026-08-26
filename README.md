@@ -195,11 +195,21 @@ procedure for `cr0_capture`, `cr0_load`, `cr0_clear_store`, and
 `cr0_write_ret`, including byte-pattern seeds and the IDA-to-runtime address
 conversion.
 
+The normal CR0-enter path does not execute the remainder of the large
+`cr0_capture` helper. KELF single-steps the already verified `mov_rax_cr0`
+offset, catches the resulting one-shot `#DB`, and places the captured RAX
+directly in the helper-compatible `saved` slot. The existing clear/write chain
+then continues without another UELF round trip. The full `cr0_capture` helper
+remains the fallback when the fast-entry hook cannot be armed.
+
 For a new firmware, add all four verified offsets together. If any helper's
 register, stack, or epilogue contract is uncertain, leave the fast path
 unavailable and use the checked legacy implementation. An observation build
 should show increasing `cr0_chain_enter`, `cr0_fast_enter`, and
 `cr0_defer_arm`, with zero `cr0_chain_fail` and no unexpected fallbacks.
+Compare `cr0_enter_avg` between otherwise identical observation runs; the
+one-shot trap and its KELF continuation are part of that number, while
+`enter_arm_avg` measures only the hook write.
 
 ## Existing functionality retained from the parent branch
 
