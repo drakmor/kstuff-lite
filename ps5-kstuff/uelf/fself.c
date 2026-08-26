@@ -231,28 +231,18 @@ static int set_dbgregs_for_watchpoint(uint64_t* regs, const uint64_t* dbgregs, s
 {
     uint64_t buf[frame_size/8 + 7];
     uint64_t new_rsp;
-    uint64_t p_pcb_flags;
-    uint64_t pcb_flags_value;
-    int had_dbregs;
+    struct dbgregs_snapshot snapshot;
     if(peek_stack_checked(regs, buf, frame_size))
         return 0;
-    if(read_dbgregs_checked(buf + frame_size/8))
+    if(snapshot_current_dbgregs_checked(&snapshot))
         return 0;
-    if(get_current_pcb_flags_ptr_checked(&p_pcb_flags))
-        return 0;
-    if(get_pcb_dbregs_checked_at(p_pcb_flags, &pcb_flags_value, &had_dbregs))
-        return 0;
-    buf[frame_size/8 + 6] = had_dbregs;
+    memcpy(buf + frame_size/8, snapshot.dr, sizeof(snapshot.dr));
+    buf[frame_size/8 + 6] = snapshot.had_dbregs;
     new_rsp = regs[RSP] - (sizeof(buf) - frame_size);
     if(copy_to_kernel(new_rsp, buf, sizeof(buf)))
         return 0;
-    if(set_pcb_dbregs_checked_at(p_pcb_flags, pcb_flags_value))
+    if(install_dbgregs_checked(dbgregs, &snapshot))
         return 0;
-    if(write_dbgregs_checked(dbgregs))
-    {
-        restore_dbgregs_state_checked_at(p_pcb_flags, pcb_flags_value, buf + frame_size/8, had_dbregs);
-        return 0;
-    }
     regs[RSP] = new_rsp;
     return 1;
 }

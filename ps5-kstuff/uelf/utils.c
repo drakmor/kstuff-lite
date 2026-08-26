@@ -621,6 +621,51 @@ int write_dbgregs_checked(const uint64_t* dr)
     return run_gadget_checked(regs);
 }
 
+__attribute__((noinline))
+int snapshot_current_dbgregs_checked(struct dbgregs_snapshot* snapshot)
+{
+    if(get_current_pcb_flags_ptr_checked(&snapshot->p_pcb_flags))
+        return 1;
+    if(get_pcb_dbregs_checked_at(snapshot->p_pcb_flags,
+                                 &snapshot->flags_value,
+                                 &snapshot->had_dbregs))
+        return 1;
+
+    if(snapshot->had_dbregs)
+    {
+        METRIC_INC(dbg_snapshot_reads);
+        return read_dbgregs_checked(snapshot->dr);
+    }
+
+    /*
+     * PCB_DBREGS clear means the hardware debug registers do not belong to
+     * this thread.  Match FreeBSD reset_dbregs(): restore an all-zero,
+     * disabled state without paying for a kernel transition to snapshot
+     * stale registers.
+     */
+    memset(snapshot->dr, 0, sizeof(snapshot->dr));
+    METRIC_INC(dbg_snapshot_skips);
+    return 0;
+}
+
+__attribute__((noinline))
+int install_dbgregs_checked(const uint64_t* dr,
+                            const struct dbgregs_snapshot* snapshot)
+{
+    if(!snapshot->had_dbregs
+    && set_pcb_dbregs_checked_at(snapshot->p_pcb_flags,
+                                 snapshot->flags_value))
+        return 1;
+    if(!write_dbgregs_checked(dr))
+        return 0;
+
+    restore_dbgregs_state_checked_at(snapshot->p_pcb_flags,
+                                     snapshot->flags_value,
+                                     snapshot->dr,
+                                     snapshot->had_dbregs);
+    return 1;
+}
+
 int rdmsr(uint32_t which, uint64_t* ans)
 {
     METRIC_INC(msr_read_calls);
@@ -765,24 +810,15 @@ void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs)
         (uint64_t)doreti_iret,
         MKTRAP(TRAP_UTILS, 1), 0, 0, 0, 0,
     };
-    uint64_t p_pcb_flags;
-    uint64_t pcb_flags_value;
-    int had_dbregs;
-    if(read_dbgregs_checked(stack_frame+6))
+    struct dbgregs_snapshot snapshot;
+    if(snapshot_current_dbgregs_checked(&snapshot))
         return;
-    if(get_current_pcb_flags_ptr_checked(&p_pcb_flags))
-        return;
-    if(get_pcb_dbregs_checked_at(p_pcb_flags, &pcb_flags_value, &had_dbregs))
-        return;
-    stack_frame[4] = had_dbregs;
+    stack_frame[4] = snapshot.had_dbregs;
+    memcpy(stack_frame + 6, snapshot.dr, sizeof(snapshot.dr));
     if(push_stack_checked(regs, stack_frame, sizeof(stack_frame)))
         return;
-    if(set_pcb_dbregs_checked_at(p_pcb_flags, pcb_flags_value))
-        goto rollback_stack;
-    if(write_dbgregs_checked(dbgregs))
+    if(install_dbgregs_checked(dbgregs, &snapshot))
     {
-        restore_dbgregs_state_checked_at(p_pcb_flags, pcb_flags_value, stack_frame+6, had_dbregs);
-rollback_stack:
         regs[RSP] += sizeof(stack_frame);
         return;
     }

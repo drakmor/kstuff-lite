@@ -101,10 +101,7 @@ void handle_kekcall_trap(uint64_t* regs, uint32_t trap)
     {
         enum { FRAME_QWORDS = 14, TAIL_OFFSET_QWORDS = 5 };
         uint64_t tail[FRAME_QWORDS - TAIL_OFFSET_QWORDS];
-        uint64_t old_dbgregs[6];
-        uint64_t p_pcb_flags;
-        uint64_t pcb_flags_value;
-        int had_dbgregs;
+        struct dbgregs_snapshot snapshot;
         if(pop_stack_tail_checked(regs, tail,
                                   FRAME_QWORDS * sizeof(uint64_t),
                                   TAIL_OFFSET_QWORDS * sizeof(uint64_t),
@@ -118,21 +115,13 @@ void handle_kekcall_trap(uint64_t* regs, uint32_t trap)
             regs[RAX] = EFAULT;
             return;
         }
-        if(read_dbgregs_checked(old_dbgregs)
-        || get_current_pcb_flags_ptr_checked(&p_pcb_flags)
-        || get_pcb_dbregs_checked_at(p_pcb_flags, &pcb_flags_value, &had_dbgregs))
+        if(snapshot_current_dbgregs_checked(&snapshot))
         {
             regs[RAX] = EFAULT;
             return;
         }
-        if(set_pcb_dbregs_checked_at(p_pcb_flags, pcb_flags_value))
+        if(install_dbgregs_checked(tail, &snapshot))
         {
-            regs[RAX] = EFAULT;
-            return;
-        }
-        if(write_dbgregs_checked(tail))
-        {
-            restore_dbgregs_state_checked_at(p_pcb_flags, pcb_flags_value, old_dbgregs, had_dbgregs);
             regs[RAX] = EFAULT;
         }
     }

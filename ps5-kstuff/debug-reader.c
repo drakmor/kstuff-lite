@@ -145,6 +145,8 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("dr_read", metrics->dbg_read_calls);
     PRINT_FIELD("dr_write", metrics->dbg_write_calls);
     PRINT_FIELD("dr_chain", metrics->dbg_write_chain_calls);
+    PRINT_FIELD("dr_snap", metrics->dbg_snapshot_reads);
+    PRINT_FIELD("dr_snap_skip", metrics->dbg_snapshot_skips);
     PRINT_FIELD("cr0_read", metrics->cr0_read_calls);
     PRINT_FIELD("cr0_write", metrics->cr0_write_calls);
     PRINT_FIELD("cr0_read_clear", metrics->cr0_read_clear_calls);
