@@ -1505,13 +1505,7 @@ static void trace_find_syscall_cfi_table_jmp_int3_addr(uint64_t* regs)
     SKIP_SCHEDULER
     if (syscall_cfi_table_base != 0)
         return;
-    
-    // some fws have a `mov     rax, gs:0` as the first instruction
-    // set user gsbase, its not used anyway
-    if (set_user_gsbase(kstack - 0x2000)) {
-        return;
-    }
-    
+     
     if (regs[0] == offsets.syscall_before)
     {
         // the syscall_cfi_table_base was loaded into rcx on all fws so far
@@ -1559,6 +1553,12 @@ uint64_t r0gdb_find_syscall_cfi_table_jmp_int3_addr(void)
     kmemcpy((char*)(offsets.idt+16*3+6), (char*)&int1_handler+2, 6);
     kmemcpy((char*)(offsets.idt+16*3+4), &int1_ist_index, 1);
 
+    // some fws have a `mov     rax, gs:0` as the first instruction
+    // set user gsbase, its not used anyway
+    if (set_user_gsbase(kstack - 0x2000)) {
+        return;
+    }
+	
     struct regs regs;
     struct regs regs_before;
 
@@ -1668,7 +1668,7 @@ int r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
      * kdata anchor.  They differ by 0x1010000.  Firmware 3.00+ uses the same
      * anchor on both sides.
      */
-    if((r0gdb_get_fw_version() >> 16) == 0x250)
+    if((r0gdb_get_fw_version() >> 16) <= 0x270)
         kdata_base -= 0x1010000;
     if(!set_offsets())
     {
