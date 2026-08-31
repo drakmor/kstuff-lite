@@ -17,9 +17,10 @@ adding firmware 2.50 support.
 - A single-transition debug-register restore and skipped hardware snapshots
   when the current thread does not own active debug registers.
 - A validated, normally fault-free CR0 save/TS-clear chain for 2.50, 4.03,
-  7.61, and 9.40. The small in-code 13.60 gadget offsets are verified against
-  its executable kernel image, but complete 13.60 support still requires the
-  prosper0gdb and SceShellCore tables.
+  7.61, and 9.40. The 9.60 gadget offsets are statically verified against its
+  executable kernel image and await runtime validation. The small in-code 13.60
+  gadget offsets are also verified, but complete 13.60 support still requires
+  the prosper0gdb and SceShellCore tables.
 - Fast CR0 entry through a one-shot KELF continuation and deferred CR0 restore
   at the final KELF exit.
 - Runtime selection between `XSAVEC` and `XSAVE`, with one-time CPUID/XCR0
@@ -100,7 +101,7 @@ configuring `rep movsb` for every single-qword update.
 UELF crypto uses SIMD instructions and must preserve kernel FPU state while
 temporarily clearing `CR0.TS`. The branch implements three paths:
 
-1. On 2.50, 4.03, 7.61, and 9.40, the primary path runs a firmware-specific
+1. On 2.50, 4.03, 7.61, 9.40, and 9.60, the primary path runs a firmware-specific
    KELF chain that captures CR0, clears TS, commits the new value, and records
    all three states without deliberately causing a second XSAVE/FXSAVE fault.
 2. If the chain has been disabled, a firmware-specific `fpusave_capture`

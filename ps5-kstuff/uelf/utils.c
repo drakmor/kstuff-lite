@@ -1024,9 +1024,9 @@ int read_cr0_clear_ts_checked(uint64_t* cr0)
      * instruction.  Treating an unrelated trap as success can copy an
      * arbitrary RCX into saved_cr0 and later write it back to CR0.
      *
-     * 2.50 uses the older helper layout.  The verified 4.03, 7.61, 9.40 and
-     * 13.60 helpers share the newer FXSAVE offset; XSAVE is at +0x1c in all
-     * of them.
+     * 2.50 uses the older helper layout.  The verified 4.03, 7.61, 9.40,
+     * 9.60 and 13.60 helpers share the newer FXSAVE offset; XSAVE is at
+     * +0x1c in all of them.
      * TODO(FW_PORT): when adding fpusave_capture for another firmware,
      * disassemble both feature branches from that exact entry and add their
      * post-fault RIP deltas here instead of assuming +0x1c/+0x21.
