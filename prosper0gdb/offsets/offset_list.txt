@@ -73,7 +73,17 @@ KDATA_OFFSET(push_pop_all_iret)
 KDATA_OFFSET(kernel_pmap_store)
 KDATA_OFFSET(crypt_singleton_array)
 KDATA_OFFSET(mov_rax_cr0)
+// TODO(FW_PORT_ALL): remove mov_cr0_rax with the checked legacy CR0 fallback.
 KDATA_OFFSET(mov_cr0_rax)
+// TODO(FW_PORT_ALL): remove these fallback-only entries when runtime fallback
+// is no longer required. cr0_load/cr0_clear_store/cr0_write_ret/store_rax_rdi
+// remain part of the primary chain.
+KDATA_OFFSET(fpusave_capture)
+KDATA_OFFSET(cr0_capture)
+KDATA_OFFSET(cr0_load)
+KDATA_OFFSET(cr0_clear_store)
+KDATA_OFFSET(cr0_write_ret)
+KDATA_OFFSET(store_rax_rdi)
 KDATA_OFFSET(syscall_cfi_table_jmp_int3)
 
 ABSOLUTE_OFFSET(p_sysent)

@@ -72,6 +72,13 @@ DEF(mov_rax_cr0, -0x4f5dd9)
 DEF(mov_cr0_rax, -0x4f5dd2)
 DEF(syscall_cfi_table_jmp_int3, -0x9031b0)
 
+DEF(fpusave_capture, -0x4f60c0)
+DEF(cr0_capture, -0x96dd1d)
+DEF(cr0_load, -0x8beec0)
+DEF(cr0_clear_store, -0x52a946)
+DEF(cr0_write_ret, -0x4f5a87)
+DEF(store_rax_rdi, -0x96e42e)
+
 // non data-relative offsets
 DEF(p_sysent, 0x988)
 

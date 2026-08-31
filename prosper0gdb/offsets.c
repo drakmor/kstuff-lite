@@ -12,6 +12,22 @@ extern uint64_t kdata_base;
 #define END_FW() }
 
 /*
+ * TODO(FW_PORT_ALL): delete this macro and the completeness check below after
+ * every firmware table has real values for all six fields.
+ *
+ * Keeps incomplete firmware tables buildable while making the missing
+ * fast-path offsets explicit.  A zero delta resolves to kdata_base and is
+ * rejected by set_offsets(); it is never exposed to UELF as a fallback.
+ */
+#define TODO_FPU_CR0_OFFSETS() \
+    DEF(fpusave_capture, 0) \
+    DEF(cr0_capture, 0) \
+    DEF(cr0_load, 0) \
+    DEF(cr0_clear_store, 0) \
+    DEF(cr0_write_ret, 0) \
+    DEF(store_rax_rdi, 0)
+
+/*
  * TODO(FW_PORT): add offsets/<major>_<minor>.h here for every new firmware.
  * Start from the nearest table only as a list of symbols; every address must
  * be re-derived from that firmware's executable kernel image and expressed
@@ -64,6 +80,8 @@ extern uint64_t kdata_base;
 #include "offsets/12_40.h"
 #include "offsets/12_60.h"
 #include "offsets/12_70.h"
+
+#undef TODO_FPU_CR0_OFFSETS
 
 void* dlsym(void*, const char*);
 
@@ -125,5 +143,15 @@ int set_offsets(void)
 #endif
     default: return -1;
     }
+
+    /* TODO(FW_PORT_ALL): remove with all zero-delta table placeholders. */
+#undef KDATA_OFFSET
+#undef ABSOLUTE_OFFSET
+#define KDATA_OFFSET(x) if(offsets.x == kdata_base) return -1;
+#define ABSOLUTE_OFFSET(x) if(!offsets.x) return -1;
+#include "offsets/offset_list.txt"
+#undef KDATA_OFFSET
+#undef ABSOLUTE_OFFSET
+
     return 0;
 }

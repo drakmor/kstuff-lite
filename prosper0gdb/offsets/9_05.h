@@ -71,6 +71,9 @@ DEF(mov_rax_cr0, -0xa5a121)
 DEF(mov_cr0_rax, -0xa5a11c)
 DEF(syscall_cfi_table_jmp_int3, -0x9f0948)
 
+/* TODO(FW_PORT): replace all six required zero-delta placeholders. */
+TODO_FPU_CR0_OFFSETS()
+
 // non data-relative offsets
 DEF(p_sysent, 0x9F8)
 #include "offset_list.txt"

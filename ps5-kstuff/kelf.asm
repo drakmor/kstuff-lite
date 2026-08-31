@@ -21,6 +21,7 @@ extern uelf_entry
 extern ist_errc
 extern ist_noerrc
 extern comparison_table
+; TODO(FW_PORT_ALL): remove cr0_capture after deleting generic entry fallback.
 extern cr0_capture
 extern cr0_load
 extern cr0_clear_store
@@ -503,6 +504,8 @@ dq pop_all_iret
 regs_for_exit:
 times iret_rip+40 db 0
 
+; TODO(FW_PORT_ALL): remove this trap-result field after deleting the
+; fpusave_capture fallback and RUN_GADGET_RESULT_FULL_WITH_TRAP plumbing.
 ; UELF treats the trap number as regs[NREGS].  Keep these legacy fields
 ; directly after the architectural frame; moving them breaks every
 ; RUN_GADGET_RESULT_FULL_WITH_TRAP caller, including the 2.50 fallback.

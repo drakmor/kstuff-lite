@@ -839,6 +839,10 @@ int wrmsr(uint32_t which, uint64_t value)
     return regs[RIP] != (uint64_t)wrmsr_ret;
 }
 
+/*
+ * TODO(FW_PORT_ALL): remove read_cr0_checked() and write_cr0_checked() after
+ * all recovery paths below stop depending on the legacy CR0 gadgets.
+ */
 int read_cr0_checked(uint64_t* cr0)
 {
     METRIC_INC(cr0_read_calls);
@@ -851,10 +855,11 @@ int read_cr0_checked(uint64_t* cr0)
 }
 
 /*
- * Preserve the pre-fpusave_capture path for firmware without a verified
- * capture offset.  In particular, do not try an offset borrowed from another
- * firmware: both gadgets below already come from that firmware's normal
- * prosper0gdb offset set.
+ * TODO(FW_PORT_ALL): remove the legacy CR0 transition after every firmware
+ * table has validated fast-path offsets and the optimized recovery paths have
+ * been proven sufficient on all supported kernels.
+ *
+ * Last-resort recovery after both required optimized paths fail at runtime.
  */
 static int read_cr0_clear_ts_legacy_checked(uint64_t* cr0)
 {
@@ -871,6 +876,7 @@ static int read_cr0_clear_ts_legacy_checked(uint64_t* cr0)
     return 0;
 }
 
+/* TODO(FW_PORT_ALL): remove these disable flags with their fallback paths. */
 static int fpusave_capture_disabled;
 static int cr0_chain_disabled;
 
@@ -880,14 +886,6 @@ static int is_sane_cr0(uint64_t cr0)
     const uint64_t required_bits = 0x80000001;
     return !(cr0 & ~known_bits)
         && (cr0 & required_bits) == required_bits;
-}
-
-static int cr0_chain_available(void)
-{
-    return (uint64_t)cr0_capture > 0x1000
-        && (uint64_t)cr0_load > 0x1000
-        && (uint64_t)cr0_clear_store > 0x1000
-        && (uint64_t)cr0_write_ret > 0x1000;
 }
 
 static uint64_t cr0_enter_hook_address;
@@ -953,6 +951,10 @@ static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
         (void)yield();
     else
     {
+        /*
+         * TODO(FW_PORT_ALL): remove this full cr0_capture fallback when fast
+         * entry is mandatory and an arm failure is returned directly.
+         */
         uint64_t regs[NREGS] = {
             [RDI] = trap_frame + fpu_cr0_scratch_offset,
             [RSI] = trap_frame + fpu_cr0_cleared_offset,
@@ -1000,10 +1002,14 @@ int read_cr0_clear_ts_checked(uint64_t* cr0)
                 start_cycles); \
     return _result; \
 } while(0)
-    if(cr0_chain_available() && !cr0_chain_disabled)
+    if(!cr0_chain_disabled)
         RETURN_CR0_READ_CLEAR(read_cr0_clear_ts_chain_checked(cr0));
 
-    if((uint64_t)fpusave_capture <= 0x1000 || fpusave_capture_disabled)
+    /*
+     * TODO(FW_PORT_ALL): remove everything from this point through the
+     * fpusave_capture result handling when the CR0 chain has no fallback.
+     */
+    if(fpusave_capture_disabled)
     {
         METRIC_INC(cr0_read_clear_fallbacks);
         RETURN_CR0_READ_CLEAR(read_cr0_clear_ts_legacy_checked(cr0));
@@ -1073,6 +1079,8 @@ int write_cr0_checked(uint64_t cr0)
 }
 
 /*
+ * TODO(FW_PORT_ALL): remove this function with deferred-restore fallback.
+ *
  * uelf_fpu_finish() runs after main() has copied the outer kernel state back
  * to trap_frame.  A synchronous gadget call at that point replaces the frame
  * with its own single-step state.  Preserve the completed outer frame around
@@ -1101,7 +1109,7 @@ int defer_cr0_restore_checked(uint64_t cr0)
                 start_cycles); \
     return _result; \
 } while(0)
-    if(cr0_chain_available() && !cr0_chain_disabled)
+    if(!cr0_chain_disabled)
     {
         METRIC_TIME_START(arm_start_cycles);
         uint64_t restore_stack = trap_frame + fpu_cr0_exit_stack_offset;
@@ -1120,6 +1128,10 @@ int defer_cr0_restore_checked(uint64_t cr0)
         METRIC_TIME(cr0_deferred_arm_cycles_total,
                     cr0_deferred_arm_cycles_max, arm_start_cycles);
     }
+    /*
+     * TODO(FW_PORT_ALL): remove this synchronous restore fallback and return
+     * the deferred-arm failure directly when fallback is no longer required.
+     */
     METRIC_INC(cr0_deferred_restore_fallbacks);
     RETURN_CR0_RESTORE(write_cr0_preserving_trap_frame_checked(cr0));
 #undef RETURN_CR0_RESTORE
