@@ -22,6 +22,7 @@
 #include <netinet/ip6.h>
 #include "r0gdb.h"
 #include "offsets.h"
+#include "../lib/r0gdb-bootstrap.h"
 
 #ifndef PS5KEK
 
@@ -49,6 +50,7 @@ static int master_fd;
 static int victim_fd;
 static uintptr_t victim_pktopts;
 uintptr_t kdata_base;
+static int inherited_pipe;
 
 void	*memcpy(void * __restrict, const void * __restrict, size_t);
 void	*memset(void *, int, size_t);
@@ -77,8 +79,18 @@ static void* malloc(size_t size)
     return mmap(0, size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANON, -1, 0);
 }
 
+ssize_t copyout(void* dst, uint64_t src, size_t count);
+
 uint64_t kread8(uint64_t ptr)
 {
+    if(inherited_pipe)
+    {
+        uint64_t value = 0;
+        if(copyout(&value, ptr, sizeof(value)) != sizeof(value))
+            return 0;
+        return value;
+    }
+
     uint64_t offset = 0;
     if(ptr % 4096 >= 4076)
     {
@@ -145,12 +157,15 @@ uint64_t rpipe;
 
 static void init_pipe(void)
 {
-    pipe(the_pipe);
+    if(!inherited_pipe)
+        pipe(the_pipe);
     proc = kread8(offsets.allproc);
     while(proc && (int)kread8(proc+0xbc) != getpid())
         proc = kread8(proc);
     if(!proc)
         *(void* volatile*)0;
+    if(inherited_pipe)
+        return;
     ofiles = kread8(kread8(proc+0x48));
     rpipe = kread8(kread8(ofiles+8+48*the_pipe[0]));
 }
@@ -255,6 +270,7 @@ static void* hammer_thread(uint64_t* arg)
             target[3] = 0x3b;
         }
     }
+    __builtin_unreachable();
 }
 
 static void jmp_setcontext(uint64_t pc)
@@ -1440,6 +1456,7 @@ static void* other_thread_fn(void* arg)
     //((int(*)())dlsym((void*)0x1, "sceKernelSleep"))(10000000);
     for(;;)
         asm volatile("");
+    __builtin_unreachable();
 }
 
 static int set_user_gsbase(uint64_t base) 
@@ -1492,7 +1509,7 @@ static void trace_find_syscall_cfi_table_jmp_int3_addr(uint64_t* regs)
     // some fws have a `mov     rax, gs:0` as the first instruction
     // set user gsbase, its not used anyway
     if (set_user_gsbase(kstack - 0x2000)) {
-        return 0;
+        return;
     }
     
     if (regs[0] == offsets.syscall_before)
@@ -1624,8 +1641,35 @@ int r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
 {
     master_fd = a;
     victim_fd = b;
-    victim_pktopts = c;
+    victim_pktopts = 0;
+    if(c && c < (UINT64_C(1) << 48))
+    {
+        const struct r0gdb_bootstrap* bootstrap = (const void*)c;
+        if(bootstrap->magic == R0GDB_BOOTSTRAP_MAGIC && bootstrap->kpipe_addr)
+        {
+            the_pipe[0] = bootstrap->rwpipe[0];
+            the_pipe[1] = bootstrap->rwpipe[1];
+            rpipe = bootstrap->kpipe_addr;
+            inherited_pipe = 1;
+        }
+    }
+    else
+    {
+        victim_pktopts = c;
+    }
     kdata_base = d;
+    /*
+     * TODO(FW_PORT): verify what anchor the new elfldr passes and what anchor
+     * was used to produce its prosper0gdb offsets.  Add an explicit firmware
+     * correction here only when those two verified addresses differ.
+     *
+     * The 2.50 elfldr ABI reports the SDK data anchor, while the 2.50
+     * prosper0gdb table was produced relative to the kernel image's older
+     * kdata anchor.  They differ by 0x1010000.  Firmware 3.00+ uses the same
+     * anchor on both sides.
+     */
+    if((r0gdb_get_fw_version() >> 16) == 0x250)
+        kdata_base -= 0x1010000;
     if(!set_offsets())
     {
         r0gdb_init_with_offsets();

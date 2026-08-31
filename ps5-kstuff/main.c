@@ -162,6 +162,12 @@ static void* kmalloc(size_t sz)
 
 #define NCPUS 16
 #define IDT (offsets.idt)
+/*
+ * TODO(FW_PORT): verify GDT/TSS array stride, CPU count, PCPU stride, and the
+ * IST slot offsets on the new firmware.  Derive them from the per-CPU setup
+ * code and confirm all populated entries, rather than extending the >= 7.00
+ * assumption from one sample.
+ */
 #define GDT(i) (offsets.gdt_array+0x68*(i))
 #define TSS(i) (offsets.tss_array+0x68*(i))
 #define PCPU(i, fwver) ((fwver >= 0x700) ? (offsets.pcpu_array+0x980*(i)) : (offsets.pcpu_array+0x900*(i)))
@@ -363,7 +369,11 @@ int get_proc_cr3(uint64_t pid, uint64_t* cr3, uint64_t* dmap_base)
     if(proc == 0)
         return -1;
     uint64_t vmspace = kread8(proc + 0x200);
-    // TODO: i dont know when this shifted, may be an earlier fw, also, add this to offsets.c? 
+    /*
+     * TODO(FW_PORT): verify vmspace->vm_pmap for the new firmware from the
+     * kernel's vmspace/pmap accessors.  Add a new explicit range (or move this
+     * into the offset table) if it is neither 0x2e0 nor 0x2e8.
+     */
     uint32_t fwver = r0gdb_get_fw_version() >> 16;
     uint32_t vmspace_pmap_offset = (fwver >= 0x600) ? 0x2E8 : 0x2E0;
     uint64_t ptrs[2] = {0};
@@ -406,6 +416,15 @@ uint64_t find_empty_pml4_index(int idx)
 
 void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_base, uint64_t dmap_virt_base, uint64_t dmap, uint64_t cr3)
 {
+    enum
+    {
+        X86_PG_V = 1,
+        X86_PG_RW = 2,
+        X86_PG_U = 4,
+        X86_PG_PS = 1 << 7,
+    };
+    const uint64_t user_page = X86_PG_V | X86_PG_RW | X86_PG_U;
+    const uint64_t user_large_page = user_page | X86_PG_PS;
     static char zeros[4096];
     uint64_t user_start = (uint64_t)uelf_base[0];
     uint64_t user_end = (uint64_t)uelf_base[1];
@@ -416,18 +435,18 @@ void build_uelf_cr3(uint64_t uelf_cr3, void* uelf_base[2], uint64_t uelf_virt_ba
     kmemcpy((void*)(pml4_virt+2048), (void*)(dmap+cr3+2048), 2048);
     uint64_t pml3_virt = uelf_cr3 + 4096;
     uint64_t pml3_dmap = uelf_cr3 + 16384; //user-accessible direct mapping of physical memory
-    copyin(pml4_virt + 8 * ((uelf_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_virt, 0, dmap, cr3) | 7}, 8);
-    copyin(pml4_virt + 8 * ((dmap_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_dmap, 0, dmap, cr3) | 7}, 8);
+    copyin(pml4_virt + 8 * ((uelf_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_virt, 0, dmap, cr3) | user_page}, 8);
+    copyin(pml4_virt + 8 * ((dmap_virt_base >> 39) & 511), &(uint64_t[1]){virt2phys_or_die(pml3_dmap, 0, dmap, cr3) | user_page}, 8);
     copyin(pml3_virt, zeros, 4096);
     uint64_t pml2_virt = uelf_cr3 + 8192;
-    copyin(pml3_virt + 8 * ((uelf_virt_base >> 30) & 511), &(uint64_t[1]){virt2phys_or_die(pml2_virt, 0, dmap, cr3) | 7}, 8);
+    copyin(pml3_virt + 8 * ((uelf_virt_base >> 30) & 511), &(uint64_t[1]){virt2phys_or_die(pml2_virt, 0, dmap, cr3) | user_page}, 8);
     copyin(pml2_virt, zeros, 4096);
     uint64_t pml1_virt = uelf_cr3 + 12288;
-    copyin(pml2_virt + 8 * ((uelf_virt_base >> 21) & 511), &(uint64_t[1]){virt2phys_or_die(pml1_virt, 0, dmap, cr3) | 7}, 8);
+    copyin(pml2_virt + 8 * ((uelf_virt_base >> 21) & 511), &(uint64_t[1]){virt2phys_or_die(pml1_virt, 0, dmap, cr3) | user_page}, 8);
     copyin(pml1_virt, zeros, 4096);
     build_uelf_pml1(pml1_virt, user_start, user_end, dmap, cr3);
     for(uint64_t i = 0; i < 512; i++)
-        copyin(pml3_dmap+8*i, &(uint64_t[1]){(i<<30) | 135}, 8);
+        copyin(pml3_dmap+8*i, &(uint64_t[1]){(i<<30) | user_large_page}, 8);
 }
 
 int find_proc(const char* name)
@@ -504,6 +523,13 @@ struct shellcore_patch
     size_t sz;
 };
 
+/*
+ * TODO(FW_PORT): add shellcore_patches/<major>_<minor>.h here after deriving
+ * every patch from that exact SceShellCore build.  Patch offsets are relative
+ * to the module image; verify original bytes and the retail/testkit/devkit
+ * variants before enabling the firmware.
+ */
+#include "shellcore_patches/2_50.h"
 #include "shellcore_patches/3_00.h"
 #include "shellcore_patches/3_10.h"
 #include "shellcore_patches/3_20.h"
@@ -652,6 +678,8 @@ enum kit_type kit = get_kit_type();
     struct shellcore_patch* patches;
     switch(ver)
     {
+    /* TODO(FW_PORT): add FW(<version>) after including its verified table. */
+    FW(250);
     FW(300);
     FW(310);
     FW(320);
@@ -752,6 +780,174 @@ uint64_t bench(void)
     for(int i = 0; i < 1000000; i++)
         getpid();
     return rdtsc() - start;
+}
+
+/*
+ * Entry at "mov rcx, cr0; clts" inside the kernel FPU-save helper.  UELF
+ * supplies a non-canonical destination so the following XSAVE/FXSAVE faults
+ * after RCX has captured CR0 and TS has been cleared.  Unverified firmwares
+ * use the ordinary read/write CR0 helpers instead.
+ *
+ * Signature used for offline/XO porting:
+ *   0f 20 c1 0f 06 83 3d ?? ?? ?? ?? 00
+ *
+ * Value 1 is an explicit unavailable sentinel.  It must remain nonzero
+ * because values[] is zero-terminated; UELF detects it and uses the original
+ * read_cr0_checked() + write_cr0_checked() implementation.
+ *
+ * TODO(FW_PORT): remaining firmwares need their own fpusave_capture entry.
+ * In the executable kernel search for
+ *   0f 20 c1 0f 06 83 3d ?? ?? ?? ?? 00
+ * and select the entry at "mov rcx,cr0; clts".  Disassemble through both the
+ * XSAVE and FXSAVE branches, record their exact RIP deltas in uelf/utils.c,
+ * and first test with KSTUFF_OBS.  Return 1 until the entry and both trap RIPs
+ * have been verified.
+ */
+static uint64_t get_fpusave_capture(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x4f60c0;
+    case 0x403: return kdata_base - 0x52e24c;
+    case 0x761: return kdata_base - 0x54982c;
+    case 0x940: return kdata_base - 0x56b3cc;
+    case 0x1360: return kdata_base - 0x57efbc;
+    default: return 1;
+    }
+}
+
+/*
+ * CR0 save/clear chain without a secondary XSAVE/FXSAVE fault.  cr0_capture
+ * stores the exact CR0 at
+ * [RDI+0x58]; cr0_load reloads it, cr0_clear_store clears TS and stores the
+ * new value through RSI, and cr0_write_ret commits RAX to CR0.  The helpers
+ * were verified independently in each kernel image -- do not borrow these
+ * offsets for adjacent firmware revisions.
+ *
+ * Porting these offsets to a new kernel (use the executable/XO kernel image):
+ *
+ *  1. Locate the kernel data-base symbol/address used by the prosper0gdb
+ *     offset table.  Convert every IDA address with
+ *
+ *       runtime = kdata_base + (gadget_ea - ida_kdata_base_ea)
+ *
+ *     The gadgets below precede kdata in the known kernels, hence the switch
+ *     entries are written as kdata_base - (ida_kdata_base_ea - gadget_ea).
+ *
+ *  2. Find and disassemble all privileged CR0 instructions, rather than
+ *     copying a nearby firmware's delta:
+ *       0f 20 c0 48 89 47 58
+ *                          mov rax, cr0; mov [rdi+0x58], rax
+ *       0f 22 c0          mov cr0, rax
+ *       0f 06             clts
+ *     Search ordinary instructions for the two non-privileged helpers:
+ *       48 8b 47 58       mov rax, [rdi+0x58]       (cr0_load)
+ *       48 83 e0 f7 ...   and rax, -9; store via RSI (cr0_clear_store)
+ *     Compiler spelling may differ, so validate semantics in disassembly;
+ *     the byte strings are search seeds, not sufficient validation.
+ *
+ *  3. Select entry points with exactly these contracts:
+ *       cr0_capture:     [RDI+0x58]=CR0 (RAX may be clobbered later)
+ *       cr0_load:        RAX=[RDI+0x58]
+ *       cr0_clear_store: RAX&=~CR0_TS and [RSI]=RAX
+ *       cr0_write_ret:   CR0=RAX
+ *     Each helper must reach either RET or POP RBP; RET without clobbering
+ *     RDI/RSI or changing RSP in another way.  kelf.asm has one padding slot
+ *     after every helper to support precisely those two epilogues.
+ *
+ *  4. Add all four offsets for the firmware together.  If any contract is
+ *     uncertain, leave the firmware unsupported (return 1), so UELF uses the
+ *     legacy checked path.  Build with KSTUFF_OBS=1 and verify after crypto
+ *     traffic that cr0_chain_enter/exit increase, cr0_chain_fail stays zero,
+ *     and cr0_rc_fallback stays zero.  A failed chain is disabled at runtime,
+ *     but first-use testing can still be fatal if an entry point is wrong.
+ *
+ * TODO(FW_PORT): add the four helpers below as one atomic firmware set.  The
+ * currently unlisted firmwares deliberately receive sentinel 1 and use the
+ * checked legacy path; never enable a partial set.
+ *
+ * 13.60 was verified against the executable image with IDA kdata anchor
+ * 0xffffffff80ec0000.  The selected entry points are:
+ *   capture     0xffffffff804627f3
+ *   load        0xffffffff804c3bd4  (48 8b 47 58 5d c3)
+ *   clear/store 0xffffffff8090812d  (jumps to mov [rsi],rax; pop rbp; ret)
+ *   write       0xffffffff8094167d  (0f 22 c0 5d c3)
+ */
+static uint64_t get_cr0_capture(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x96dd1d;
+    case 0x403: return kdata_base - 0x9d68ed;
+    case 0x761: return kdata_base - 0xa1246d;
+    case 0x940: return kdata_base - 0xa59b2d;
+    case 0x1360: return kdata_base - 0xa5d80d;
+    default: return 1;
+    }
+}
+
+static uint64_t get_cr0_load(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x8beec0;
+    case 0x403: return kdata_base - 0x92333c;
+    case 0x761: return kdata_base - 0x95cf3c;
+    case 0x940: return kdata_base - 0x9a646c;
+    case 0x1360: return kdata_base - 0x9fc42c;
+    default: return 1;
+    }
+}
+
+static uint64_t get_cr0_clear_store(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x52a946;
+    case 0x403: return kdata_base - 0x566b70;
+    case 0x761: return kdata_base - 0x582ed5;
+    case 0x940: return kdata_base - 0x5a3905;
+    case 0x1360: return kdata_base - 0x5b7ed3;
+    default: return 1;
+    }
+}
+
+static uint64_t get_cr0_write_ret(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    case 0x250: return kdata_base - 0x4f5a87;
+    case 0x403: return kdata_base - 0x52dc13;
+    case 0x761: return kdata_base - 0x549203;
+    case 0x940: return kdata_base - 0x56ada3;
+    case 0x1360: return kdata_base - 0x57e983;
+    default: return 1;
+    }
+}
+
+/*
+ * Scalar KELF writer: mov [rdi], rax; [pop rbp;] ret.
+ *
+ * TODO(FW_PORT): validate offsets.cpu_switch-0x1ee on every newly added
+ * firmware.  Search executable kernel bytes for either "48 89 07 c3" or
+ * "48 89 07 5d c3", then disassemble from the MOV and require exactly
+ * [RDI]=RAX followed by RET or POP RBP; RET, with no RSP adjustment or other
+ * clobber that KELF does not model.  If the historical cpu_switch-relative
+ * address is not that gadget, add an explicit case as done for 13.60.
+ */
+static uint64_t get_store_rax_rdi(uint64_t fwver)
+{
+    switch(fwver)
+    {
+    /*
+     * 13.60 no longer has the writer at cpu_switch-0x1ee.  Verified in the
+     * executable kernel image at IDA 0xffffffff80cdbb5e, relative to the
+     * 13.xx SDK kdata anchor at 0xffffffff80ec0000
+     * (bytes: 48 89 07 5d c3).
+     */
+    case 0x1360: return kdata_base - 0x1e44a2;
+    default: return offsets.cpu_switch - 0x1ee;
+    }
 }
 
 #define USE_INT3_SYSCALL_HOOK 1
@@ -879,6 +1075,12 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
         ".fwver"+zero,
+        "fpusave_capture"+zero,
+        "cr0_capture"+zero,
+        "cr0_load"+zero,
+        "cr0_clear_store"+zero,
+        "cr0_write_ret"+zero,
+        "store_rax_rdi"+zero,
 #define KDATA_OFFSET(x) (#x)+zero,
 #define ABSOLUTE_OFFSET(x) (#x)+zero,
 #include "../prosper0gdb/offsets/offset_list.txt"
@@ -888,6 +1090,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     };
 	
     uint64_t fwver = r0gdb_get_fw_version() >> 16;
+    uint64_t store_rax_rdi = get_store_rax_rdi(fwver);
     uint64_t values[] = {
         comparison_table,      // comparison_table
         dmem_virt_base,        // dmem
@@ -903,6 +1106,12 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
         fwver,                 // .fwver
+        get_fpusave_capture(fwver), // fpusave_capture
+        get_cr0_capture(fwver), // cr0_capture
+        get_cr0_load(fwver), // cr0_load
+        get_cr0_clear_store(fwver), // cr0_clear_store
+        get_cr0_write_ret(fwver), // cr0_write_ret
+        store_rax_rdi,
 #define KDATA_OFFSET(x) offsets.x,
 #define ABSOLUTE_OFFSET(x) offsets.x,
 #include "../prosper0gdb/offsets/offset_list.txt"

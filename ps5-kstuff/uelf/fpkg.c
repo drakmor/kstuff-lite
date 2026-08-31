@@ -37,6 +37,11 @@ enum crypto_message_kind
     CRYPTO_MESSAGE_XTS,
 };
 
+enum {
+    CRYPTO_MESSAGE_DATA_QWORDS = 21,
+    CRYPTO_MESSAGE_NEXT_OFFSET = 320,
+};
+
 struct crypto_message_info
 {
     enum crypto_message_kind kind;
@@ -60,37 +65,50 @@ static int crypto_request_emulated(uint64_t* regs, uint64_t msg, uint32_t status
     return 1;
 }
 
-static int read_crypto_message(uint64_t msg, uint64_t msg_data[21])
+static int read_crypto_message(uint64_t msg,
+                               uint64_t msg_data[CRYPTO_MESSAGE_DATA_QWORDS],
+                               uint64_t* next_msg)
 {
-    return copy_from_kernel(msg_data, msg, sizeof(uint64_t) * 21);
+    METRIC_INC(crypto_message_snapshot_reads);
+    METRIC_TIME_START(start_cycles);
+    int error = copy_from_kernel(msg_data, msg,
+                                 sizeof(uint64_t) * CRYPTO_MESSAGE_DATA_QWORDS);
+    if(!error)
+        error = copy_u64_from_kernel(next_msg, msg + CRYPTO_MESSAGE_NEXT_OFFSET);
+    if(error)
+        METRIC_INC(crypto_message_snapshot_failures);
+    METRIC_TIME(crypto_message_snapshot_cycles_total,
+                crypto_message_snapshot_cycles_max, start_cycles);
+    return error;
 }
 
-static int is_hmac_message(const uint64_t msg_data[21])
+static int is_hmac_message(const uint64_t msg_data[CRYPTO_MESSAGE_DATA_QWORDS])
 {
     return (msg_data[0] & 0x7fffffff) == 0x9132000;
 }
 
-static int is_xts_message(const uint64_t msg_data[21])
+static int is_xts_message(const uint64_t msg_data[CRYPTO_MESSAGE_DATA_QWORDS])
 {
     return (msg_data[0] & 0x7ffff7ff) == 0x2108000;
 }
 
-static struct crypto_message_result unhandled_crypto_message(uint64_t msg)
+static struct crypto_message_result unhandled_crypto_message(uint64_t next_msg)
 {
     return (struct crypto_message_result){
         .emulated_messages = 0,
-        .next_msg = kpeek64(msg + 320),
+        .next_msg = next_msg,
         .status = ENOSYS,
         .total_messages = 1,
     };
 }
 
-static struct crypto_message_info inspect_crypto_message(const uint64_t msg_data[21])
+static struct crypto_message_info inspect_crypto_message(
+    const uint64_t msg_data[CRYPTO_MESSAGE_DATA_QWORDS], uint8_t key[32])
 {
     if(is_xts_message(msg_data))
     {
         int key_idx = HANDLE_TO_IDX(msg_data[5]);
-        if(key_idx < 0 || !has_fake_key(key_idx))
+        if(key_idx < 0 || !get_fake_key(key_idx, key))
         {
             METRIC_INC(fpkg_reject_xts_non_fake);
         }
@@ -110,7 +128,7 @@ static struct crypto_message_info inspect_crypto_message(const uint64_t msg_data
         {
             METRIC_INC(fpkg_reject_hmac_bad_shape);
         }
-        else if(key_idx < 0 || !has_fake_key(key_idx))
+        else if(key_idx < 0 || !get_fake_key(key_idx, key))
         {
             METRIC_INC(fpkg_reject_hmac_non_fake);
         }
@@ -130,15 +148,13 @@ static struct crypto_message_info inspect_crypto_message(const uint64_t msg_data
     };
 }
 
-static struct crypto_message_result handle_hmac_message(uint64_t msg, const uint64_t msg_data[21],
-                                                        int key_idx,
+static struct crypto_message_result handle_hmac_message(uint64_t msg,
+                                                        const uint64_t msg_data[CRYPTO_MESSAGE_DATA_QWORDS],
+                                                        uint64_t next_msg,
+                                                        int key_idx, const uint8_t key[32],
                                                         struct crypto_request_cache* cache)
 {
-    struct crypto_message_result result = unhandled_crypto_message(msg);
-    uint8_t key[32];
-    if(!get_fake_key(key_idx, key))
-        return result;
-
+    struct crypto_message_result result = unhandled_crypto_message(next_msg);
     uint8_t hash[32] = {0};
     if(pfs_hmac_virtual_fpu_held(cache, hash, key_idx, key, msg_data[2], msg_data[1]))
     {
@@ -157,14 +173,11 @@ static struct crypto_message_result handle_hmac_message(uint64_t msg, const uint
     return result;
 }
 
-static struct crypto_message_result handle_xts_message(uint64_t msg, const uint64_t msg_data[21],
-                                                       int key_idx,
-                                                       struct crypto_request_cache* cache)
+static struct crypto_message_result handle_xts_message(
+    const uint64_t msg_data[CRYPTO_MESSAGE_DATA_QWORDS], uint64_t next_msg,
+    int key_idx, const uint8_t key[32], struct crypto_request_cache* cache)
 {
-    struct crypto_message_result result = unhandled_crypto_message(msg);
-    uint8_t key[32];
-    if(!get_fake_key(key_idx, key))
-        return result;
+    struct crypto_message_result result = unhandled_crypto_message(next_msg);
     METRIC_INC(xts_run_messages_total);
 
     uint64_t src = msg_data[2];
@@ -205,18 +218,26 @@ static int handle_crypto_request(uint64_t* regs)
     int fpu_entered = 0;
     METRIC_INC(crypto_requests_total);
 
+    /*
+     * TODO(FW_PORT): at sceSblServiceCryptAsync's trap/call site, trace the
+     * linked-list head argument into the saved register frame and update this
+     * selection for the new firmware.  Validate it by walking several message
+     * chains read-only before enabling emulation.
+     */
     uint64_t start = (FWVER >= 0x800) ? regs[RBX] : regs[R14];
 
     for (uint64_t msg = start; msg && !total_status;)
     {
-        uint64_t msg_data[21];
-        if(read_crypto_message(msg, msg_data))
+        uint64_t msg_data[CRYPTO_MESSAGE_DATA_QWORDS];
+        uint64_t next_msg;
+        if(read_crypto_message(msg, msg_data, &next_msg))
         {
             total_status = -1;
             break;
         }
 
-        struct crypto_message_info msg_info = inspect_crypto_message(msg_data);
+        uint8_t key[32];
+        struct crypto_message_info msg_info = inspect_crypto_message(msg_data, key);
         METRIC_INC(crypto_messages_total);
         if(msg_info.kind == CRYPTO_MESSAGE_XTS)
             METRIC_INC(crypto_messages_xts);
@@ -236,11 +257,14 @@ static int handle_crypto_request(uint64_t* regs)
 
         struct crypto_message_result result;
         if(msg_info.kind == CRYPTO_MESSAGE_XTS)
-            result = handle_xts_message(msg, msg_data, msg_info.key_idx, &s_crypto_request_cache);
+            result = handle_xts_message(msg_data, next_msg, msg_info.key_idx, key,
+                                        &s_crypto_request_cache);
         else if(msg_info.kind == CRYPTO_MESSAGE_HMAC)
-            result = handle_hmac_message(msg, msg_data, msg_info.key_idx, &s_crypto_request_cache);
+            result = handle_hmac_message(msg, msg_data, next_msg,
+                                         msg_info.key_idx, key,
+                                         &s_crypto_request_cache);
         else
-            result = unhandled_crypto_message(msg);
+            result = unhandled_crypto_message(next_msg);
         int status = result.status;
 
         total += result.total_messages;
@@ -400,14 +424,18 @@ void handle_fpkg_trap(uint64_t* regs, uint32_t trapno)
 {
     if(trapno == 1)
     {
-        uint64_t frame[12];
-        if(pop_stack_checked(regs, frame, sizeof(frame)))
+        enum { FRAME_QWORDS = 12, TAIL_OFFSET_QWORDS = 7 };
+        uint64_t tail[FRAME_QWORDS - TAIL_OFFSET_QWORDS];
+        if(pop_stack_tail_checked(regs, tail,
+                                  FRAME_QWORDS * sizeof(uint64_t),
+                                  TAIL_OFFSET_QWORDS * sizeof(uint64_t),
+                                  sizeof(tail)))
             return;
-        regs[RBX] = frame[7];
-        regs[R14] = frame[8];
-        regs[R15] = frame[9];
-        regs[RBP] = frame[10];
-        regs[RIP] = frame[11];
+        regs[RBX] = tail[0];
+        regs[R14] = tail[1];
+        regs[R15] = tail[2];
+        regs[RBP] = tail[3];
+        regs[RIP] = tail[4];
         regs[RAX] = 0;
     }
 }

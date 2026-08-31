@@ -131,6 +131,39 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("mailbox_unhandled", metrics->mailbox_unhandled);
     tee_putc('\n');
 
+    tee_printf("uelf_main");
+    PRINT_FIELD("entries", metrics->uelf_main_entries);
+    PRINT_FIELD("trap_read_fail", metrics->uelf_main_trap_read_failures);
+    PRINT_FIELD("jr_read_fail", metrics->uelf_main_just_return_read_failures);
+    PRINT_FIELD("trap_write_fail", metrics->uelf_main_trap_write_failures);
+    PRINT_FIELD("gadget", metrics->run_gadget_calls);
+    PRINT_FIELD("gadget_fail", metrics->run_gadget_failures);
+    PRINT_FIELD("gadget_elided", metrics->dbg_write_elided_gadgets);
+    tee_putc('\n');
+
+    tee_printf("kernel_ops");
+    PRINT_FIELD("dr_read", metrics->dbg_read_calls);
+    PRINT_FIELD("dr_write", metrics->dbg_write_calls);
+    PRINT_FIELD("dr_chain", metrics->dbg_write_chain_calls);
+    PRINT_FIELD("dr_snap", metrics->dbg_snapshot_reads);
+    PRINT_FIELD("dr_snap_skip", metrics->dbg_snapshot_skips);
+    PRINT_FIELD("cr0_read", metrics->cr0_read_calls);
+    PRINT_FIELD("cr0_write", metrics->cr0_write_calls);
+    PRINT_FIELD("cr0_read_clear", metrics->cr0_read_clear_calls);
+    PRINT_FIELD("cr0_rc_fallback", metrics->cr0_read_clear_fallbacks);
+    PRINT_FIELD("cr0_elided", metrics->cr0_clear_elided_transitions);
+    PRINT_FIELD("cr0_ts_clear", metrics->cr0_ts_already_clear);
+    PRINT_FIELD("cr0_chain_enter", metrics->cr0_chain_read_clear_calls);
+    PRINT_FIELD("cr0_defer_arm", metrics->cr0_deferred_restore_arms);
+    PRINT_FIELD("cr0_defer_fallback", metrics->cr0_deferred_restore_fallbacks);
+    PRINT_FIELD("cr0_fast_enter", metrics->cr0_fast_enter_arms);
+    PRINT_FIELD("cr0_fast_fallback", metrics->cr0_fast_enter_fallbacks);
+    PRINT_FIELD("cr0_chain_fail", metrics->cr0_chain_failures);
+    PRINT_FIELD("cr0_restore", metrics->cr0_restore_calls);
+    PRINT_FIELD("msr_read", metrics->msr_read_calls);
+    PRINT_FIELD("msr_write", metrics->msr_write_calls);
+    tee_putc('\n');
+
     tee_printf("decrypt_regs");
     PRINT_FIELD("rax", metrics->debug_reg_decrypt_rax);
     PRINT_FIELD("rcx", metrics->debug_reg_decrypt_rcx);
@@ -198,6 +231,50 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("out_max", metrics->copy_to_cycles_max);
     tee_putc('\n');
 
+    tee_printf("optimization_cycles");
+    PRINT_FIELD("main_total", metrics->uelf_main_cycles_total);
+    PRINT_FIELD("main_max", metrics->uelf_main_cycles_max);
+    PRINT_FIELD("gadget_total", metrics->run_gadget_cycles_total);
+    PRINT_FIELD("gadget_max", metrics->run_gadget_cycles_max);
+    PRINT_FIELD("scalar_in_total", metrics->scalar_copy_from_cycles_total);
+    PRINT_FIELD("scalar_in_max", metrics->scalar_copy_from_cycles_max);
+    PRINT_FIELD("scalar_out_total", metrics->scalar_copy_to_cycles_total);
+    PRINT_FIELD("scalar_out_max", metrics->scalar_copy_to_cycles_max);
+    PRINT_FIELD("crypto_snap_total", metrics->crypto_message_snapshot_cycles_total);
+    PRINT_FIELD("crypto_snap_max", metrics->crypto_message_snapshot_cycles_max);
+    PRINT_FIELD("fpu_enter_total", metrics->fpu_enter_cycles_total);
+    PRINT_FIELD("fpu_enter_avg", metrics->fpu_enters
+        ? metrics->fpu_enter_cycles_total / metrics->fpu_enters : 0);
+    PRINT_FIELD("fpu_enter_max", metrics->fpu_enter_cycles_max);
+    PRINT_FIELD("fpu_exit_total", metrics->fpu_exit_cycles_total);
+    PRINT_FIELD("fpu_exit_avg", metrics->fpu_exits
+        ? metrics->fpu_exit_cycles_total / metrics->fpu_exits : 0);
+    PRINT_FIELD("fpu_exit_max", metrics->fpu_exit_cycles_max);
+    PRINT_FIELD("cr0_enter_total", metrics->cr0_read_clear_cycles_total);
+    PRINT_FIELD("cr0_enter_avg", metrics->cr0_read_clear_calls
+        ? metrics->cr0_read_clear_cycles_total / metrics->cr0_read_clear_calls
+        : 0);
+    PRINT_FIELD("cr0_enter_max", metrics->cr0_read_clear_cycles_max);
+    PRINT_FIELD("cr0_exit_total", metrics->cr0_restore_cycles_total);
+    PRINT_FIELD("cr0_exit_avg", metrics->cr0_restore_calls
+        ? metrics->cr0_restore_cycles_total / metrics->cr0_restore_calls : 0);
+    PRINT_FIELD("cr0_exit_max", metrics->cr0_restore_cycles_max);
+    tee_putc('\n');
+
+    tee_printf("fpu_state_cycles");
+    PRINT_FIELD("xcr0_init", metrics->fpu_xcr0_initializations);
+    PRINT_FIELD("xsave", metrics->fpu_xsave_calls);
+    PRINT_FIELD("xsavec", metrics->fpu_xsavec_calls);
+    PRINT_FIELD("save_avg", metrics->fpu_xsave_calls
+                              + metrics->fpu_xsavec_calls
+        ? metrics->fpu_xsave_cycles_total
+            / (metrics->fpu_xsave_calls + metrics->fpu_xsavec_calls) : 0);
+    PRINT_FIELD("save_max", metrics->fpu_xsave_cycles_max);
+    PRINT_FIELD("restore_avg", metrics->fpu_exits
+        ? metrics->fpu_xrstor_cycles_total / metrics->fpu_exits : 0);
+    PRINT_FIELD("restore_max", metrics->fpu_xrstor_cycles_max);
+    tee_putc('\n');
+
     tee_printf("fself_cache");
     PRINT_FIELD("hdr_hit", metrics->fself_header_cache_hits);
     PRINT_FIELD("hdr_miss", metrics->fself_header_cache_misses);
@@ -252,6 +329,8 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("hmac_msg", metrics->crypto_messages_hmac);
     PRINT_FIELD("other_msg", metrics->crypto_messages_other);
     PRINT_FIELD("emu_msg", metrics->crypto_emulated_messages);
+    PRINT_FIELD("snap", metrics->crypto_message_snapshot_reads);
+    PRINT_FIELD("snap_fail", metrics->crypto_message_snapshot_failures);
     tee_putc('\n');
 
     tee_printf("xts");
@@ -271,8 +350,10 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("hmac_req", metrics->hmac_requests);
     PRINT_FIELD("hmac_bytes", metrics->hmac_bytes);
     PRINT_FIELD("fpu", metrics->fpu_enters);
+    PRINT_FIELD("fpu_exit", metrics->fpu_exits);
     PRINT_FIELD("fpu_nested", metrics->fpu_nested_enters);
     PRINT_FIELD("fpu_fail", metrics->fpu_enter_failures);
+    PRINT_FIELD("fpu_exit_fail", metrics->fpu_exit_failures);
     tee_putc('\n');
 
     tee_printf("fpkg");
@@ -319,6 +400,43 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("out", metrics->copy_to_calls);
     PRINT_FIELD("out_bytes", metrics->copy_to_bytes);
     PRINT_FIELD("out_fail", metrics->copy_to_failures);
+    PRINT_FIELD("scalar_in", metrics->scalar_copy_from_calls);
+    PRINT_FIELD("scalar_out", metrics->scalar_copy_to_calls);
+    tee_putc('\n');
+
+    tee_printf("mapping_cache");
+    PRINT_FIELD("trap_hit", metrics->trap_mapping_hits);
+    PRINT_FIELD("trap_miss", metrics->trap_mapping_misses);
+    PRINT_FIELD("trap_fallback", metrics->trap_mapping_fallbacks);
+    PRINT_FIELD("jr_hit", metrics->just_return_mapping_hits);
+    PRINT_FIELD("jr_miss", metrics->just_return_mapping_misses);
+    PRINT_FIELD("jr_fallback", metrics->just_return_mapping_fallbacks);
+    PRINT_FIELD("pcpu_hit", metrics->pcpu_mapping_hits);
+    PRINT_FIELD("pcpu_miss", metrics->pcpu_mapping_misses);
+    PRINT_FIELD("pcpu_fallback", metrics->pcpu_mapping_fallbacks);
+    PRINT_FIELD("tss_hit", metrics->tss_mapping_hits);
+    PRINT_FIELD("tss_miss", metrics->tss_mapping_misses);
+    PRINT_FIELD("tss_fallback", metrics->tss_mapping_fallbacks);
+    PRINT_FIELD("wrmsr_hit", metrics->wrmsr_args_mapping_hits);
+    PRINT_FIELD("wrmsr_miss", metrics->wrmsr_args_mapping_misses);
+    PRINT_FIELD("wrmsr_fallback", metrics->wrmsr_args_mapping_fallbacks);
+    PRINT_FIELD("cr0_enter_hook_hit", metrics->cr0_enter_hook_mapping_hits);
+    PRINT_FIELD("cr0_enter_hook_miss", metrics->cr0_enter_hook_mapping_misses);
+    PRINT_FIELD("cr0_enter_hook_fallback", metrics->cr0_enter_hook_mapping_fallbacks);
+    PRINT_FIELD("cr0_exit_hook_hit", metrics->cr0_exit_hook_mapping_hits);
+    PRINT_FIELD("cr0_exit_hook_miss", metrics->cr0_exit_hook_mapping_misses);
+    PRINT_FIELD("cr0_exit_hook_fallback", metrics->cr0_exit_hook_mapping_fallbacks);
+    tee_putc('\n');
+
+    tee_printf("cr0_hook_cycles");
+    PRINT_FIELD("enter_arm_avg", metrics->cr0_fast_enter_arms
+        ? metrics->cr0_fast_enter_arm_cycles_total
+            / metrics->cr0_fast_enter_arms : 0);
+    PRINT_FIELD("enter_arm_max", metrics->cr0_fast_enter_arm_cycles_max);
+    PRINT_FIELD("exit_arm_avg", metrics->cr0_deferred_restore_arms
+        ? metrics->cr0_deferred_arm_cycles_total
+            / metrics->cr0_deferred_restore_arms : 0);
+    PRINT_FIELD("exit_arm_max", metrics->cr0_deferred_arm_cycles_max);
     tee_putc('\n');
 
     tee_printf("obs");

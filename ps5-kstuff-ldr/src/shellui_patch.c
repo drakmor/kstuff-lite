@@ -33,10 +33,17 @@
     }
 
 static unsigned long vmspace_pmap(unsigned long vmspace_kaddr) {
+    /*
+     * TODO(FW_PORT): verify vmspace->vm_pmap in the new kernel before
+     * extending these ranges.  Find kernel functions which load p_vmspace and
+     * then address the embedded pmap; confirm pm_pml4/pm_cr3 remain at +0x20.
+     * 13.60 vmspace_free and pmap activation paths use vmspace+0x2e8 and load
+     * CR3 from vmspace+0x310, confirming pmap+0x28.
+     */
     switch (kernel_get_fw_version() >> 16) {
         case 0x100 ... 0x102: return vmspace_kaddr + 0x2C0;
         case 0x105 ... 0x550: return vmspace_kaddr + 0x2E0;
-        case 0x600 ... 0x1270: return vmspace_kaddr + 0x2E8;
+        case 0x600 ... 0x1360: return vmspace_kaddr + 0x2E8;
         default: return 0; // unsupported fw version
     }
 }

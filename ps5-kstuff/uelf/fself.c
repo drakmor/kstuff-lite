@@ -231,26 +231,20 @@ static int set_dbgregs_for_watchpoint(uint64_t* regs, const uint64_t* dbgregs, s
 {
     uint64_t buf[frame_size/8 + 7];
     uint64_t new_rsp;
-    uint64_t p_pcb_flags;
-    uint64_t pcb_flags_value;
-    int had_dbregs;
+    struct dbgregs_snapshot snapshot;
     if(peek_stack_checked(regs, buf, frame_size))
         return 0;
-    if(read_dbgregs_checked(buf + frame_size/8))
+    if(snapshot_current_dbgregs_checked(&snapshot))
         return 0;
-    if(get_current_pcb_flags_ptr_checked(&p_pcb_flags))
-        return 0;
-    if(get_pcb_dbregs_checked_at(p_pcb_flags, &pcb_flags_value, &had_dbregs))
-        return 0;
-    buf[frame_size/8 + 6] = had_dbregs;
+    memcpy(buf + frame_size/8, snapshot.dr, sizeof(snapshot.dr));
+    buf[frame_size/8 + 6] = snapshot.had_dbregs;
     new_rsp = regs[RSP] - (sizeof(buf) - frame_size);
     if(copy_to_kernel(new_rsp, buf, sizeof(buf)))
         return 0;
-    if(set_pcb_dbregs_checked_at(p_pcb_flags, pcb_flags_value))
-        return 0;
-    if(write_dbgregs_checked(dbgregs))
+    if(install_dbgregs_checked(dbgregs, &snapshot))
     {
-        restore_dbgregs_state_checked_at(p_pcb_flags, pcb_flags_value, buf + frame_size/8, had_dbregs);
+        /* The shifted frame overlaps the live frame at the old RSP. */
+        (void)copy_to_kernel(regs[RSP], buf, frame_size);
         return 0;
     }
     regs[RSP] = new_rsp;
@@ -304,6 +298,7 @@ void handle_fself_trap(uint64_t* regs, uint32_t trapno)
         uint64_t self_header;
         if(peek_stack_checked(regs, fself_header_backup, sizeof(fself_header_backup)))
             return;
+        /* TODO(FW_PORT): verify the SELF context register at this trap RIP. */
         if(kpeek64_checked(regs[(FWVER >= 0x800) ? RBX : R14] + 56, &self_header))
             return;
         if(copy_to_kernel(self_header, fself_header_backup + 40, mini_syscore_header_size))
@@ -327,6 +322,11 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     {
         METRIC_INC(fself_mailbox_decrypt_self_block);
         uint64_t ctx;
+        /*
+         * TODO(FW_PORT): recover ctx from the new mailbox caller at this LR.
+         * Use the decompiler plus stack-frame disassembly to identify the
+         * context argument; do not extend a version range by proximity.
+         */
         if(FWVER >= 0x800)
             ctx = regs[R12];
         else if(FWVER >= 0x500 && FWVER <= 0x761)
@@ -342,9 +342,9 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
             uint64_t request[8];
             if(copy_from_kernel(request, regs[RDX], sizeof(request)))
                 RETURN_FSELF_MAILBOX(0);
-            if(pop_stack_checked(regs, &regs[RIP], 8))
-                RETURN_FSELF_MAILBOX(0);
             memcpy(DMEM+request[1], DMEM+request[2], (uint32_t)request[6]);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = lr;
             regs[RAX] = 0;
             METRIC_INC(fself_mailbox_decrypt_self_block_emulated);
             emulated = 1;
@@ -354,6 +354,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     {
         METRIC_INC(fself_mailbox_decrypt_multiple_self_blocks);
         uint64_t ctx;
+        /* TODO(FW_PORT): verify the ctx register/stack slot at this exact LR. */
         if(FWVER >= 0x600)
         {
             if(kpeek64_checked(regs[RBP] - 208, &ctx))
@@ -371,11 +372,11 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
             uint64_t request[8];
             if(copy_from_kernel(request, regs[RDX], sizeof(request)))
                 RETURN_FSELF_MAILBOX(0);
-            if(pop_stack_checked(regs, &regs[RIP], 8))
-                RETURN_FSELF_MAILBOX(0);
             uint64_t* src = (uint64_t*)(DMEM + request[1]);
             uint64_t* dst = (uint64_t*)(DMEM + request[2]);
             copy_decrypted_self_blocks(DMEM, src, dst, request[5]);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = lr;
             regs[RAX] = 0;
             METRIC_INC(fself_mailbox_decrypt_multiple_self_blocks_emulated);
             emulated = 1;
@@ -384,6 +385,7 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     else if(lr == (uint64_t)sceSblServiceMailbox_lr_verifyHeader)
     {
         METRIC_INC(fself_mailbox_verify_header);
+        /* TODO(FW_PORT): verify which preserved register owns self_context. */
         uint64_t self_context = regs[(FWVER >= 0x800) ? RBX : R14];
         uint64_t ctx_data[8];
         uint64_t self_header;
@@ -436,6 +438,10 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
     {
         METRIC_INC(fself_mailbox_load_self_segment);
         uint64_t ctx;
+        /*
+         * TODO(FW_PORT): derive the loadSelfSegment context location from the
+         * new caller at sceSblServiceMailbox_lr_loadSelfSegment.
+         */
         if(FWVER >= 0x1000)
         {
             if(kpeek64_checked(regs[RBP] - 232, &ctx))
@@ -452,8 +458,8 @@ int try_handle_fself_mailbox(uint64_t* regs, uint64_t lr)
             ctx = regs[RBX];
         if(get_context_fself_info(ctx, 0, 0, 0, 0))
         {
-            if(pop_stack_checked(regs, &regs[RIP], 8))
-                RETURN_FSELF_MAILBOX(0);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = lr;
             regs[RAX] = 0;
             METRIC_INC(fself_mailbox_load_self_segment_emulated);
             emulated = 1;
@@ -481,6 +487,7 @@ int try_handle_fself_trap(uint64_t* regs)
         uint64_t frame[4];
         if(copy_from_kernel(frame, regs[RSP], sizeof(frame)))
             RETURN_FSELF_TRAP(FSELF_HANDLE_HANDLED);
+        /* TODO(FW_PORT): verify the watchpoint's destination register. */
         regs[(FWVER >= 0x800) ? RAX : R10] |= 0xffffull << 48;
         if(frame[3] == (uint64_t)loadSelfSegment_watchpoint_lr)
         {

@@ -1,3 +1,13 @@
+// TODO(FW_PORT): this is the required symbol/gadget inventory for every new
+// firmware table in this directory.  Resolve functions/data by xrefs and
+// control-flow comparison with a supported kernel.  Resolve instruction
+// gadgets by exact disassembly semantics, not by copying an adjacent delta;
+// byte-search all executable segments, inspect the full containing basic
+// block, and verify registers, stack adjustment, and epilogue.  In particular
+// mov_rax_cr0 must begin with "mov rax, cr0" (0f 20 c0), mov_cr0_rax with
+// "mov cr0, rax" (0f 22 c0), and cpu_switch must be the function whose tail
+// restores DR0/1/2/3/6/7.  Add any new common symbol here, then populate it in
+// every firmware header because this file also defines struct offset_table.
 KDATA_OFFSET(allproc)
 KDATA_OFFSET(idt)
 KDATA_OFFSET(gdt_array)

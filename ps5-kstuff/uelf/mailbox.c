@@ -13,7 +13,9 @@ int try_handle_mailbox_trap(uint64_t* regs)
     if(regs[RIP] == (uint64_t)sceSblServiceMailbox)
     {
         METRIC_INC(mailbox_traps);
-        uint64_t lr = kpeek64(regs[RSP]);
+        uint64_t lr;
+        if(copy_u64_from_kernel(&lr, regs[RSP]))
+            return 1;
         int fself_result = try_handle_fself_mailbox(regs, lr);
         if(fself_result & FSELF_HANDLE_HANDLED)
         {

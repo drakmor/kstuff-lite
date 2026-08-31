@@ -28,11 +28,9 @@ extern struct sysent sysents[];
 extern struct sysent sysents_ps4[];
 extern char doreti_iret[];
 extern char ist4[];
-extern char tss[];
 extern char int1_handler[];
 extern char int3_handler[];
 extern char int13_handler[];
-extern uint64_t wrmsr_args;
 #ifndef FREEBSD
 extern char sceSblServiceMailbox[];
 extern char sceSblServiceCryptAsync_deref_singleton[];
@@ -67,15 +65,20 @@ void handle_syscall(uint64_t* regs, int allow_kekcall)
     if(allow_kekcall && IS_PPR(getppid))
     {
         METRIC_INC(syscall_kekcall_dispatches);
-        uint64_t args[NREGS] = {0};
-        copy_from_kernel(args, kpeek64(regs[RDI]+td_frame), sizeof(args));
+        _Static_assert(RAX == 6, "kekcall argument prefix must end at RAX");
+        uint64_t args[RAX + 1];
+        uint64_t frame;
+        if(kpeek64_checked(regs[RDI] + td_frame, &frame)
+        || copy_from_kernel(args, frame, sizeof(args)))
+            RETURN_HANDLE_SYSCALL();
         int err = handle_kekcall(regs, args, args[RAX]>>32);
         if(err != ENOSYS)
         {
-            if(!err)
-                kpoke64(regs[RDI]+td_retval, args[RAX]);
+            if(!err && copy_u64_to_kernel(regs[RDI] + td_retval, args[RAX]))
+                err = EFAULT;
             regs[RAX] = err;
-            pop_stack_checked(regs, &regs[RIP], 8);
+            regs[RSP] += sizeof(uint64_t);
+            regs[RIP] = (uint64_t)syscall_after;
         }
 
         RETURN_HANDLE_SYSCALL();
@@ -371,7 +374,7 @@ from_userspace:
                 RETURN_HANDLE();
             //arm wrmsr in the exit path
             uint64_t args[3] = {gsbase >> 32, 0xc0000101, (uint32_t)gsbase};
-            if(copy_to_kernel(wrmsr_args, args, sizeof(args)))
+            if(copy_to_wrmsr_args_cached(args))
                 RETURN_HANDLE();
         }
         //inject a fake #DB/#BP/#GP exception
@@ -384,7 +387,7 @@ from_userspace:
         {
             if(from_user)
             {
-                if(copy_u64_from_kernel(&stack, (uint64_t)tss + 4))
+                if(copy_rsp0_from_tss_cached(&stack))
                     RETURN_HANDLE();
             }
             else
@@ -420,6 +423,11 @@ from_userspace:
     }
     else if(regs[RIP] == (uint64_t)syscall_before)
     {
+        /*
+         * TODO(FW_PORT): derive the syscall entry stack layout from the new
+         * kernel's syscall_before path.  Confirm both syscall_rsp_to_rsi and
+         * the 10.00+ extra 0x10 bytes before extending this version rule.
+         */
         const uint64_t syscall_extra = (FWVER >= 0x1000 ? 0x10 : 0);
         uint64_t syscall_target;
         regs[RAX] |= 0xffffull << 48;
@@ -463,17 +471,32 @@ from_userspace:
 
 void main(uint64_t just_return)
 {
-    uint64_t regs[NREGS];
-    if(copy_from_kernel(regs, trap_frame, sizeof(regs)))
-        return;
+    METRIC_INC(uelf_main_entries);
+    METRIC_TIME_START(start_cycles);
+#define RETURN_UELF_MAIN() do { \
+    METRIC_TIME(uelf_main_cycles_total, uelf_main_cycles_max, start_cycles); \
+    return; \
+} while(0)
+    uint64_t regs[NREGS + 1];
+    if(copy_from_trap_frame_cached(regs, sizeof(regs)))
+    {
+        METRIC_INC(uelf_main_trap_read_failures);
+        RETURN_UELF_MAIN();
+    }
     uint64_t jr_frame[5];
-    if(copy_from_kernel(jr_frame, just_return, 40))
-        return;
+    if(copy_from_just_return_cached(jr_frame, just_return, sizeof(jr_frame)))
+    {
+        METRIC_INC(uelf_main_just_return_read_failures);
+        RETURN_UELF_MAIN();
+    }
     have_error_code = jr_frame[0];
     regs[RDX] = jr_frame[2];
     regs[RCX] = jr_frame[3];
     regs[RAX] = jr_frame[4];
-    intno = kpeek64(trap_frame+(sizeof(regs)));
+    intno = regs[NREGS];
     handle(regs);
-    copy_to_kernel(trap_frame, regs, sizeof(regs));
+    if(copy_to_trap_frame_cached(regs, NREGS * sizeof(uint64_t)))
+        METRIC_INC(uelf_main_trap_write_failures);
+    METRIC_TIME(uelf_main_cycles_total, uelf_main_cycles_max, start_cycles);
+#undef RETURN_UELF_MAIN
 }

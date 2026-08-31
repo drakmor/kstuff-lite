@@ -10,6 +10,7 @@ global trap_frame
 global wrmsr_args
 global _start
 extern main
+extern uelf_fpu_finish
 
 yield:
 push rbp
@@ -69,6 +70,7 @@ lea rsp, [rel stack_end]
 mov rdi, rcx
 mov rsi, r8
 call main
+call uelf_fpu_finish
 hlt
 .unyield:
 mov rax, rcx
