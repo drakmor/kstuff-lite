@@ -71,6 +71,13 @@ DEF(mov_rax_cr0, -0x9d6ee1)
 DEF(mov_cr0_rax, -0x9d6edc)
 DEF(syscall_cfi_table_jmp_int3, -0x968e00)
 
+DEF(fpusave_capture, -0x52e24c)
+DEF(cr0_capture, -0x9d68ed)
+DEF(cr0_load, -0x92333c)
+DEF(cr0_clear_store, -0x566b70)
+DEF(cr0_write_ret, -0x52dc13)
+DEF(store_rax_rdi, -0x9d716e)
+
 // non data-relative offsets
 DEF(p_sysent, 0x9C0)
 #include "offset_list.txt"

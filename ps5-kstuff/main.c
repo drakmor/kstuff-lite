@@ -782,174 +782,6 @@ uint64_t bench(void)
     return rdtsc() - start;
 }
 
-/*
- * Entry at "mov rcx, cr0; clts" inside the kernel FPU-save helper.  UELF
- * supplies a non-canonical destination so the following XSAVE/FXSAVE faults
- * after RCX has captured CR0 and TS has been cleared.  Unverified firmwares
- * use the ordinary read/write CR0 helpers instead.
- *
- * Signature used for offline/XO porting:
- *   0f 20 c1 0f 06 83 3d ?? ?? ?? ?? 00
- *
- * Value 1 is an explicit unavailable sentinel.  It must remain nonzero
- * because values[] is zero-terminated; UELF detects it and uses the original
- * read_cr0_checked() + write_cr0_checked() implementation.
- *
- * TODO(FW_PORT): remaining firmwares need their own fpusave_capture entry.
- * In the executable kernel search for
- *   0f 20 c1 0f 06 83 3d ?? ?? ?? ?? 00
- * and select the entry at "mov rcx,cr0; clts".  Disassemble through both the
- * XSAVE and FXSAVE branches, record their exact RIP deltas in uelf/utils.c,
- * and first test with KSTUFF_OBS.  Return 1 until the entry and both trap RIPs
- * have been verified.
- */
-static uint64_t get_fpusave_capture(uint64_t fwver)
-{
-    switch(fwver)
-    {
-    case 0x250: return kdata_base - 0x4f60c0;
-    case 0x403: return kdata_base - 0x52e24c;
-    case 0x761: return kdata_base - 0x54982c;
-    case 0x940: return kdata_base - 0x56b3cc;
-    case 0x1360: return kdata_base - 0x57efbc;
-    default: return 1;
-    }
-}
-
-/*
- * CR0 save/clear chain without a secondary XSAVE/FXSAVE fault.  cr0_capture
- * stores the exact CR0 at
- * [RDI+0x58]; cr0_load reloads it, cr0_clear_store clears TS and stores the
- * new value through RSI, and cr0_write_ret commits RAX to CR0.  The helpers
- * were verified independently in each kernel image -- do not borrow these
- * offsets for adjacent firmware revisions.
- *
- * Porting these offsets to a new kernel (use the executable/XO kernel image):
- *
- *  1. Locate the kernel data-base symbol/address used by the prosper0gdb
- *     offset table.  Convert every IDA address with
- *
- *       runtime = kdata_base + (gadget_ea - ida_kdata_base_ea)
- *
- *     The gadgets below precede kdata in the known kernels, hence the switch
- *     entries are written as kdata_base - (ida_kdata_base_ea - gadget_ea).
- *
- *  2. Find and disassemble all privileged CR0 instructions, rather than
- *     copying a nearby firmware's delta:
- *       0f 20 c0 48 89 47 58
- *                          mov rax, cr0; mov [rdi+0x58], rax
- *       0f 22 c0          mov cr0, rax
- *       0f 06             clts
- *     Search ordinary instructions for the two non-privileged helpers:
- *       48 8b 47 58       mov rax, [rdi+0x58]       (cr0_load)
- *       48 83 e0 f7 ...   and rax, -9; store via RSI (cr0_clear_store)
- *     Compiler spelling may differ, so validate semantics in disassembly;
- *     the byte strings are search seeds, not sufficient validation.
- *
- *  3. Select entry points with exactly these contracts:
- *       cr0_capture:     [RDI+0x58]=CR0 (RAX may be clobbered later)
- *       cr0_load:        RAX=[RDI+0x58]
- *       cr0_clear_store: RAX&=~CR0_TS and [RSI]=RAX
- *       cr0_write_ret:   CR0=RAX
- *     Each helper must reach either RET or POP RBP; RET without clobbering
- *     RDI/RSI or changing RSP in another way.  kelf.asm has one padding slot
- *     after every helper to support precisely those two epilogues.
- *
- *  4. Add all four offsets for the firmware together.  If any contract is
- *     uncertain, leave the firmware unsupported (return 1), so UELF uses the
- *     legacy checked path.  Build with KSTUFF_OBS=1 and verify after crypto
- *     traffic that cr0_chain_enter/exit increase, cr0_chain_fail stays zero,
- *     and cr0_rc_fallback stays zero.  A failed chain is disabled at runtime,
- *     but first-use testing can still be fatal if an entry point is wrong.
- *
- * TODO(FW_PORT): add the four helpers below as one atomic firmware set.  The
- * currently unlisted firmwares deliberately receive sentinel 1 and use the
- * checked legacy path; never enable a partial set.
- *
- * 13.60 was verified against the executable image with IDA kdata anchor
- * 0xffffffff80ec0000.  The selected entry points are:
- *   capture     0xffffffff804627f3
- *   load        0xffffffff804c3bd4  (48 8b 47 58 5d c3)
- *   clear/store 0xffffffff8090812d  (jumps to mov [rsi],rax; pop rbp; ret)
- *   write       0xffffffff8094167d  (0f 22 c0 5d c3)
- */
-static uint64_t get_cr0_capture(uint64_t fwver)
-{
-    switch(fwver)
-    {
-    case 0x250: return kdata_base - 0x96dd1d;
-    case 0x403: return kdata_base - 0x9d68ed;
-    case 0x761: return kdata_base - 0xa1246d;
-    case 0x940: return kdata_base - 0xa59b2d;
-    case 0x1360: return kdata_base - 0xa5d80d;
-    default: return 1;
-    }
-}
-
-static uint64_t get_cr0_load(uint64_t fwver)
-{
-    switch(fwver)
-    {
-    case 0x250: return kdata_base - 0x8beec0;
-    case 0x403: return kdata_base - 0x92333c;
-    case 0x761: return kdata_base - 0x95cf3c;
-    case 0x940: return kdata_base - 0x9a646c;
-    case 0x1360: return kdata_base - 0x9fc42c;
-    default: return 1;
-    }
-}
-
-static uint64_t get_cr0_clear_store(uint64_t fwver)
-{
-    switch(fwver)
-    {
-    case 0x250: return kdata_base - 0x52a946;
-    case 0x403: return kdata_base - 0x566b70;
-    case 0x761: return kdata_base - 0x582ed5;
-    case 0x940: return kdata_base - 0x5a3905;
-    case 0x1360: return kdata_base - 0x5b7ed3;
-    default: return 1;
-    }
-}
-
-static uint64_t get_cr0_write_ret(uint64_t fwver)
-{
-    switch(fwver)
-    {
-    case 0x250: return kdata_base - 0x4f5a87;
-    case 0x403: return kdata_base - 0x52dc13;
-    case 0x761: return kdata_base - 0x549203;
-    case 0x940: return kdata_base - 0x56ada3;
-    case 0x1360: return kdata_base - 0x57e983;
-    default: return 1;
-    }
-}
-
-/*
- * Scalar KELF writer: mov [rdi], rax; [pop rbp;] ret.
- *
- * TODO(FW_PORT): validate offsets.cpu_switch-0x1ee on every newly added
- * firmware.  Search executable kernel bytes for either "48 89 07 c3" or
- * "48 89 07 5d c3", then disassemble from the MOV and require exactly
- * [RDI]=RAX followed by RET or POP RBP; RET, with no RSP adjustment or other
- * clobber that KELF does not model.  If the historical cpu_switch-relative
- * address is not that gadget, add an explicit case as done for 13.60.
- */
-static uint64_t get_store_rax_rdi(uint64_t fwver)
-{
-    switch(fwver)
-    {
-    /*
-     * 13.60 no longer has the writer at cpu_switch-0x1ee.  Verified in the
-     * executable kernel image at IDA 0xffffffff80cdbb5e, relative to the
-     * 13.xx SDK kdata anchor at 0xffffffff80ec0000
-     * (bytes: 48 89 07 5d c3).
-     */
-    case 0x1360: return kdata_base - 0x1e44a2;
-    default: return offsets.cpu_switch - 0x1ee;
-    }
-}
-
 #define USE_INT3_SYSCALL_HOOK 1
 #define INT13_IST_INDEX 3
 #define INT1_IST_INDEX 4
@@ -1075,12 +907,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         ".uelf_cr3"+zero,
         ".uelf_entry"+zero,
         ".fwver"+zero,
-        "fpusave_capture"+zero,
-        "cr0_capture"+zero,
-        "cr0_load"+zero,
-        "cr0_clear_store"+zero,
-        "cr0_write_ret"+zero,
-        "store_rax_rdi"+zero,
 #define KDATA_OFFSET(x) (#x)+zero,
 #define ABSOLUTE_OFFSET(x) (#x)+zero,
 #include "../prosper0gdb/offsets/offset_list.txt"
@@ -1090,7 +916,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
     };
 	
     uint64_t fwver = r0gdb_get_fw_version() >> 16;
-    uint64_t store_rax_rdi = get_store_rax_rdi(fwver);
     uint64_t values[] = {
         comparison_table,      // comparison_table
         dmem_virt_base,        // dmem
@@ -1106,12 +931,6 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         0x1235,                // .uelf_cr3
         0x1236,                // .uelf_entry
         fwver,                 // .fwver
-        get_fpusave_capture(fwver), // fpusave_capture
-        get_cr0_capture(fwver), // cr0_capture
-        get_cr0_load(fwver), // cr0_load
-        get_cr0_clear_store(fwver), // cr0_clear_store
-        get_cr0_write_ret(fwver), // cr0_write_ret
-        store_rax_rdi,
 #define KDATA_OFFSET(x) offsets.x,
 #define ABSOLUTE_OFFSET(x) offsets.x,
 #include "../prosper0gdb/offsets/offset_list.txt"
@@ -1344,7 +1163,7 @@ int main(void* ds, int a, int b, uintptr_t c, uintptr_t d)
                                "Retail";
 
     char msg[128];
-    snprintf(msg, sizeof(msg), "Welcome To Kstuff Lite 1.10\nPlayStation 5 FW: %x.%02x (%s)\nBy sleirsgoevy", 
+    snprintf(msg, sizeof(msg), "Welcome To Kstuff Lite 1.11-test5-dr\nPlayStation 5 FW: %x.%02x (%s)\nBy sleirsgoevy",
              fwver >> 8, fwver & 0xFF, console_type);
     notify(msg);
 	
