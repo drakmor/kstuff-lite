@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Locate required kstuff FPU/CR0 helper candidates in PS5 kernel ELFs.
+"""Locate required kstuff CR0-chain helper candidates in PS5 kernel ELFs.
 
 The scanner only searches executable PT_LOAD segments.  It reports exact
 virtual addresses and offsets relative to the first PT_LOAD segment following
@@ -172,30 +172,13 @@ def find_clear_store(image: ElfImage) -> tuple[list[int], dict[int, list[str]]]:
     return accepted, traces
 
 
-def fpusave_details(image: ElfImage, address: int) -> dict[str, object]:
-    disassembly = instruction_text(image, address, size=80, count=20)
-    xsave = []
-    fxsave = []
-    for insn in MD.disasm(image.bytes_at(address, 80), address, count=20):
-        if insn.mnemonic.startswith("xsave") and "[rdi]" in insn.op_str:
-            xsave.append(insn.address - address)
-        if insn.mnemonic.startswith("fxsave") and "[rdi]" in insn.op_str:
-            fxsave.append(insn.address - address)
-    return {
-        "xsave_trap_deltas": xsave,
-        "fxsave_trap_deltas": fxsave,
-        "disassembly": disassembly,
-    }
-
-
 def signed_hex(value: int) -> str:
     sign = "-" if value < 0 else ""
     return f"{sign}0x{abs(value):x}"
 
 
 def candidate_record(image: ElfImage, addresses: list[int], kdata_base: int,
-                     traces: dict[int, list[str]] | None = None,
-                     fpusave: bool = False) -> dict[str, object]:
+                     traces: dict[int, list[str]] | None = None) -> dict[str, object]:
     values = []
     for address in addresses:
         item: dict[str, object] = {
@@ -205,8 +188,6 @@ def candidate_record(image: ElfImage, addresses: list[int], kdata_base: int,
             "disassembly": (traces or {}).get(address)
                 or instruction_text(image, address),
         }
-        if fpusave:
-            item.update(fpusave_details(image, address))
         values.append(item)
     return {
         "status": "unique" if len(values) == 1 else
@@ -223,20 +204,14 @@ def analyze(data: bytes, source: str, forced_kdata_base: int | None) -> dict[str
 
     clear_store, clear_traces = find_clear_store(image)
     matches = {
-        "fpusave_capture": (
-            find_regex(image, rb"\x0f\x20\xc1\x0f\x06\x83\x3d....\x00"),
-            None,
-            True,
-        ),
-        "cr0_capture": (find_regex(image, rb"\x0f\x20\xc0\x48\x89\x47\x58"), None, False),
-        "cr0_load": (find_regex(image, rb"\x48\x8b\x47\x58(?:\x5d)?\xc3"), None, False),
-        "cr0_clear_store": (clear_store, clear_traces, False),
-        "cr0_write_ret": (find_regex(image, rb"\x0f\x22\xc0(?:\x5d)?\xc3"), None, False),
-        "store_rax_rdi": (find_regex(image, rb"\x48\x89\x07(?:\x5d)?\xc3"), None, False),
+        "cr0_load": (find_regex(image, rb"\x48\x8b\x47\x58(?:\x5d)?\xc3"), None),
+        "cr0_clear_store": (clear_store, clear_traces),
+        "cr0_write_ret": (find_regex(image, rb"\x0f\x22\xc0(?:\x5d)?\xc3"), None),
+        "store_rax_rdi": (find_regex(image, rb"\x48\x89\x07(?:\x5d)?\xc3"), None),
     }
     helpers = {
-        name: candidate_record(image, addresses, kdata_base, traces, is_fpusave)
-        for name, (addresses, traces, is_fpusave) in matches.items()
+        name: candidate_record(image, addresses, kdata_base, traces)
+        for name, (addresses, traces) in matches.items()
     }
     complete = all(item["status"] == "unique" for item in helpers.values())
     has_all = all(item["status"] != "missing" for item in helpers.values())
@@ -278,10 +253,6 @@ def print_human(report: dict[str, object]) -> None:
         for index, candidate in enumerate(candidates):
             selected = "  [selected]" if index == 0 else ""
             print(f"    {candidate['address']}  {candidate['offset_hex']}{selected}")
-            if name == "fpusave_capture":
-                print(f"      XSAVE={candidate['xsave_trap_deltas']} "
-                      f"FXSAVE={candidate['fxsave_trap_deltas']}")
-
     if report["has_all_helpers"]:
         label = "header definitions" if report["status"] == "complete" \
             else "candidate header definitions (review ambiguous selections)"
@@ -300,8 +271,8 @@ def main() -> int:
         description=__doc__,
         epilog=(
             "examples:\n"
-            "  python tools/find_fpu_cr0_offsets.py C:\\kernels\\unpacked\n"
-            "  python tools/find_fpu_cr0_offsets.py kernel_retail_250.elf --json"
+            "  python tools/find_cr0_offsets.py C:\\kernels\\unpacked\n"
+            "  python tools/find_cr0_offsets.py kernel_retail_250.elf --json"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

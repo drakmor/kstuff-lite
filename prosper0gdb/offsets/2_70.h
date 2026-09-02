@@ -1,9 +1,9 @@
-// offsets/2_50.h
-#ifndef OFFSETS_2_50_H
-#define OFFSETS_2_50_H
+// offsets/2_70.h
+#ifndef OFFSETS_2_70_H
+#define OFFSETS_2_70_H
 #include "../offsets.h"
 
-START_FW(250)
+START_FW(270)
 DEF(allproc, 0x3711c28)
 DEF(idt, 0x73bcad0)
 DEF(gdt_array, 0x73bdc70)
@@ -65,11 +65,11 @@ DEF(justreturn_pop, justreturn + 8)
 DEF(mini_syscore_header, 0x1cfe628)
 DEF(pop_all_iret, -0x966ecb)
 DEF(pop_all_except_rdi_iret, pop_all_iret + 4)
-DEF(push_pop_all_iret, -0x907aa8)
+DEF(push_pop_all_iret, -0x9069f0)
 DEF(kernel_pmap_store, 0x41438c8)
 DEF(crypt_singleton_array, 0x3d22390)
 DEF(mov_rax_cr0, -0x4f5dd9)
-DEF(syscall_cfi_table_jmp_int3, -0x9031b0)
+DEF(syscall_cfi_table_jmp_int3, -0x903168)
 
 DEF(cr0_load, -0x8beec0)
 DEF(cr0_clear_store, -0x52a946)

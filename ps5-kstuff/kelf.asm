@@ -21,8 +21,6 @@ extern uelf_entry
 extern ist_errc
 extern ist_noerrc
 extern comparison_table
-; TODO(FW_PORT_ALL): remove cr0_capture after deleting generic entry fallback.
-extern cr0_capture
 extern cr0_load
 extern cr0_clear_store
 extern cr0_write_ret
@@ -504,11 +502,9 @@ dq pop_all_iret
 regs_for_exit:
 times iret_rip+40 db 0
 
-; TODO(FW_PORT_ALL): remove this trap-result field after deleting the
-; fpusave_capture fallback and RUN_GADGET_RESULT_FULL_WITH_TRAP plumbing.
 ; UELF treats the trap number as regs[NREGS].  Keep these legacy fields
-; directly after the architectural frame; moving them breaks every
-; RUN_GADGET_RESULT_FULL_WITH_TRAP caller, including the 2.50 fallback.
+; directly after the architectural frame while the generic trap-result
+; protocol remains part of the shared ABI.
 intno:
 dq 0
 
@@ -585,9 +581,8 @@ dq 0
 
 ; Fast CR0 enter service.  UELF redirects the post-CR3 continuation here for
 ; exactly one yield.  Reset that hook, single-step only MOV RAX,CR0, save its
-; result, then enter the same validated clear/write continuation used by the
-; generic cr0_capture fallback.  The dedicated #DB continuation avoids a
-; second KELF -> UELF -> KELF round trip.
+; result, then enter the validated clear/write continuation.  The dedicated
+; #DB continuation avoids a second KELF -> UELF -> KELF round trip.
 times fpu_cr0_fast_enter_stack_offset-($-regs_for_exit) db 0
 fpu_cr0_fast_enter_stack:
 pokeq ist_after_restore_cr3_rsp, return_to_caller
