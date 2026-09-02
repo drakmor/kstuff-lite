@@ -599,7 +599,6 @@ enum run_gadget_result
     RUN_GADGET_RESULT_NONE,
     RUN_GADGET_RESULT_RAX,
     RUN_GADGET_RESULT_FULL,
-    RUN_GADGET_RESULT_FULL_WITH_TRAP,
 };
 
 static __attribute__((noinline)) int run_gadget_result_checked(
@@ -618,13 +617,9 @@ static __attribute__((noinline)) int run_gadget_result_checked(
         RETURN_RUN_GADGET(EFAULT);
     uint64_t just_return = yield();
 
-    if(result == RUN_GADGET_RESULT_FULL
-    || result == RUN_GADGET_RESULT_FULL_WITH_TRAP)
+    if(result == RUN_GADGET_RESULT_FULL)
     {
-        const size_t regs_size = result == RUN_GADGET_RESULT_FULL_WITH_TRAP
-                               ? (NREGS + 1) * sizeof(*regs)
-                               : NREGS * sizeof(*regs);
-        if(copy_from_trap_frame_cached(regs, regs_size))
+        if(copy_from_trap_frame_cached(regs, NREGS * sizeof(*regs)))
             RETURN_RUN_GADGET(EFAULT);
     }
 
@@ -665,22 +660,11 @@ static int run_gadget_no_result_checked(uint64_t* regs)
     return run_gadget_result_checked(regs, RUN_GADGET_RESULT_NONE, NULL);
 }
 
-static int run_gadget_with_trap_checked(uint64_t* regs)
-{
-    return run_gadget_result_checked(regs,
-                                     RUN_GADGET_RESULT_FULL_WITH_TRAP,
-                                     NULL);
-}
-
 extern char dr2gpr_start[];
 extern char cpu_switch[];
 extern char rdmsr_start[];
 extern char rdmsr_end[];
 extern char wrmsr_ret[];
-extern char mov_rax_cr0[];
-extern char mov_cr0_rax[];
-extern char fpusave_capture[];
-extern char cr0_capture[];
 extern char cr0_load[];
 extern char cr0_clear_store[];
 extern char cr0_write_ret[];
@@ -839,47 +823,6 @@ int wrmsr(uint32_t which, uint64_t value)
     return regs[RIP] != (uint64_t)wrmsr_ret;
 }
 
-/*
- * TODO(FW_PORT_ALL): remove read_cr0_checked() and write_cr0_checked() after
- * all recovery paths below stop depending on the legacy CR0 gadgets.
- */
-int read_cr0_checked(uint64_t* cr0)
-{
-    METRIC_INC(cr0_read_calls);
-    uint64_t regs[NREGS] = {
-        [RIP] = (uint64_t)mov_rax_cr0, 0x20, 0x102, 0, 0,
-    };
-    if(run_gadget_capture_rax_checked(regs, cr0))
-        return EFAULT;
-    return 0;
-}
-
-/*
- * TODO(FW_PORT_ALL): remove the legacy CR0 transition after every firmware
- * table has validated fast-path offsets and the optimized recovery paths have
- * been proven sufficient on all supported kernels.
- *
- * Last-resort recovery after both required optimized paths fail at runtime.
- */
-static int read_cr0_clear_ts_legacy_checked(uint64_t* cr0)
-{
-    if(read_cr0_checked(cr0))
-        return EFAULT;
-    if(!(*cr0 & 8))
-    {
-        METRIC_INC(cr0_ts_already_clear);
-        METRIC_INC(cr0_clear_elided_transitions);
-        return 0;
-    }
-    if(write_cr0_checked(*cr0 & -9))
-        return EFAULT;
-    return 0;
-}
-
-/* TODO(FW_PORT_ALL): remove these disable flags with their fallback paths. */
-static int fpusave_capture_disabled;
-static int cr0_chain_disabled;
-
 static int is_sane_cr0(uint64_t cr0)
 {
     const uint64_t known_bits = 0xe005003f;
@@ -915,7 +858,7 @@ static int arm_cr0_fast_enter(void)
                              &cr0_enter_hook_address,
                              fpu_cr0_enter_hook_ptr_offset, enter_stack))
     {
-        METRIC_INC(cr0_fast_enter_fallbacks);
+        METRIC_INC(cr0_fast_enter_failures);
         METRIC_TIME(cr0_fast_enter_arm_cycles_total,
                     cr0_fast_enter_arm_cycles_max, start_cycles);
         return EFAULT;
@@ -947,28 +890,12 @@ static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
     }
 
     METRIC_INC(cr0_read_calls);
-    if(!arm_cr0_fast_enter())
-        (void)yield();
-    else
+    if(arm_cr0_fast_enter())
     {
-        /*
-         * TODO(FW_PORT_ALL): remove this full cr0_capture fallback when fast
-         * entry is mandatory and an arm failure is returned directly.
-         */
-        uint64_t regs[NREGS] = {
-            [RDI] = trap_frame + fpu_cr0_scratch_offset,
-            [RSI] = trap_frame + fpu_cr0_cleared_offset,
-            [RIP] = (uint64_t)cr0_capture,
-            [CS] = 0x20,
-            [EFLAGS] = 2,
-            [RSP] = trap_frame + fpu_cr0_enter_stack_offset,
-        };
-        if(run_gadget_no_result_checked(regs))
-        {
-            METRIC_INC(cr0_chain_failures);
-            return EFAULT;
-        }
+        METRIC_INC(cr0_chain_failures);
+        return EFAULT;
     }
+    (void)yield();
 
     if(copy_from_trap_frame_offset_cached(&result, fpu_cr0_scratch_offset,
                                           sizeof(result))
@@ -980,7 +907,6 @@ static int read_cr0_clear_ts_chain_checked(uint64_t* cr0)
         /* If the chain cleared an originally set TS, restore it before exit. */
         if(is_sane_cr0(result.saved) && (result.saved & 8))
             (void)write_cr0_checked(result.saved);
-        cr0_chain_disabled = 1;
         METRIC_INC(cr0_chain_failures);
         return EFAULT;
     }
@@ -1002,69 +928,7 @@ int read_cr0_clear_ts_checked(uint64_t* cr0)
                 start_cycles); \
     return _result; \
 } while(0)
-    if(!cr0_chain_disabled)
-        RETURN_CR0_READ_CLEAR(read_cr0_clear_ts_chain_checked(cr0));
-
-    /*
-     * TODO(FW_PORT_ALL): remove everything from this point through the
-     * fpusave_capture result handling when the CR0 chain has no fallback.
-     */
-    if(fpusave_capture_disabled)
-    {
-        METRIC_INC(cr0_read_clear_fallbacks);
-        RETURN_CR0_READ_CLEAR(read_cr0_clear_ts_legacy_checked(cr0));
-    }
-
-    METRIC_INC(cr0_read_calls);
-    uint64_t regs[NREGS + 1] = {
-        [RIP] = (uint64_t)fpusave_capture,
-        [CS] = 0x20,
-        [EFLAGS] = 2,
-        [RDI] = 0xdeadbeefdeadbeef,
-    };
-    if(run_gadget_with_trap_checked(regs))
-        RETURN_CR0_READ_CLEAR(EFAULT);
-
-    /*
-     * The non-canonical destination must raise #GP at the XSAVE or FXSAVE
-     * instruction.  Treating an unrelated trap as success can copy an
-     * arbitrary RCX into saved_cr0 and later write it back to CR0.
-     *
-     * 2.50 uses the older helper layout.  The verified 4.03, 7.61, 9.40,
-     * 9.60 and 13.60 helpers share the newer FXSAVE offset; XSAVE is at
-     * +0x1c in all of them.
-     * TODO(FW_PORT): when adding fpusave_capture for another firmware,
-     * disassemble both feature branches from that exact entry and add their
-     * post-fault RIP deltas here instead of assuming +0x1c/+0x21.
-     */
-    const uint64_t expected_xsave_rip = (uint64_t)fpusave_capture + 0x1c;
-    const uint64_t expected_fxsave_rip = (uint64_t)fpusave_capture
-                                       + (FWVER == 0x250 ? 0x23 : 0x21);
-    if(regs[NREGS] != 13
-    || (regs[RIP] != expected_xsave_rip
-     && regs[RIP] != expected_fxsave_rip)
-    || !is_sane_cr0(regs[RCX]))
-    {
-        /*
-         * MOV RCX,CR0 is the first instruction.  If the unexpected trap is
-         * still inside the helper, RCX contains the original CR0 and CLTS may
-         * already have cleared TS.  Restore it before disabling this path.
-         */
-        const uint64_t capture_rip = (uint64_t)fpusave_capture;
-        if(regs[RIP] >= capture_rip + 3
-        && regs[RIP] < capture_rip + 0x2a
-        && is_sane_cr0(regs[RCX])
-        && (regs[RCX] & 8))
-            (void)write_cr0_checked(regs[RCX]);
-        fpusave_capture_disabled = 1;
-        METRIC_INC(run_gadget_failures);
-        RETURN_CR0_READ_CLEAR(EFAULT);
-    }
-    *cr0 = regs[RCX];
-    if(!(*cr0 & 8))
-        METRIC_INC(cr0_ts_already_clear);
-    METRIC_INC(cr0_clear_elided_transitions);
-    RETURN_CR0_READ_CLEAR(0);
+    RETURN_CR0_READ_CLEAR(read_cr0_clear_ts_chain_checked(cr0));
 #undef RETURN_CR0_READ_CLEAR
 }
 
@@ -1072,31 +936,10 @@ int write_cr0_checked(uint64_t cr0)
 {
     METRIC_INC(cr0_write_calls);
     uint64_t regs[NREGS] = {
-        [RIP] = (uint64_t)mov_cr0_rax, 0x20, 0x102, 0, 0,
+        [RIP] = (uint64_t)cr0_write_ret, 0x20, 0x102, 0, 0,
         [RAX] = cr0,
     };
     return run_gadget_no_result_checked(regs);
-}
-
-/*
- * TODO(FW_PORT_ALL): remove this function with deferred-restore fallback.
- *
- * uelf_fpu_finish() runs after main() has copied the outer kernel state back
- * to trap_frame.  A synchronous gadget call at that point replaces the frame
- * with its own single-step state.  Preserve the completed outer frame around
- * the legacy CR0 restore so the terminal HLT still returns to the interrupted
- * kernel path rather than to the CR0 gadget's continuation.
- */
-static int write_cr0_preserving_trap_frame_checked(uint64_t cr0)
-{
-    uint64_t outer_regs[NREGS];
-    if(copy_from_trap_frame_cached(outer_regs, sizeof(outer_regs)))
-        return EFAULT;
-
-    int result = write_cr0_checked(cr0);
-    if(copy_to_trap_frame_cached(outer_regs, sizeof(outer_regs)))
-        return EFAULT;
-    return result;
 }
 
 int defer_cr0_restore_checked(uint64_t cr0)
@@ -1109,31 +952,23 @@ int defer_cr0_restore_checked(uint64_t cr0)
                 start_cycles); \
     return _result; \
 } while(0)
-    if(!cr0_chain_disabled)
+    METRIC_TIME_START(arm_start_cycles);
+    uint64_t restore_stack = trap_frame + fpu_cr0_exit_stack_offset;
+    if(copy_to_trap_frame_offset_cached(fpu_cr0_deferred_offset, &cr0,
+                                        sizeof(cr0))
+    || write_cr0_hook_cached(&s_cr0_exit_hook_mapping,
+                             &cr0_exit_hook_address,
+                             fpu_cr0_exit_hook_ptr_offset,
+                             restore_stack))
     {
-        METRIC_TIME_START(arm_start_cycles);
-        uint64_t restore_stack = trap_frame + fpu_cr0_exit_stack_offset;
-        if(!copy_to_trap_frame_offset_cached(fpu_cr0_deferred_offset, &cr0,
-                                             sizeof(cr0))
-        && !write_cr0_hook_cached(&s_cr0_exit_hook_mapping,
-                                  &cr0_exit_hook_address,
-                                  fpu_cr0_exit_hook_ptr_offset,
-                                  restore_stack))
-        {
-            METRIC_INC(cr0_deferred_restore_arms);
-            METRIC_TIME(cr0_deferred_arm_cycles_total,
-                        cr0_deferred_arm_cycles_max, arm_start_cycles);
-            RETURN_CR0_RESTORE(0);
-        }
         METRIC_TIME(cr0_deferred_arm_cycles_total,
                     cr0_deferred_arm_cycles_max, arm_start_cycles);
+        RETURN_CR0_RESTORE(EFAULT);
     }
-    /*
-     * TODO(FW_PORT_ALL): remove this synchronous restore fallback and return
-     * the deferred-arm failure directly when fallback is no longer required.
-     */
-    METRIC_INC(cr0_deferred_restore_fallbacks);
-    RETURN_CR0_RESTORE(write_cr0_preserving_trap_frame_checked(cr0));
+    METRIC_INC(cr0_deferred_restore_arms);
+    METRIC_TIME(cr0_deferred_arm_cycles_total,
+                cr0_deferred_arm_cycles_max, arm_start_cycles);
+    RETURN_CR0_RESTORE(0);
 #undef RETURN_CR0_RESTORE
 }
 

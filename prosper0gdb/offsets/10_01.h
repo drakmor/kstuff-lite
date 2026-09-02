@@ -68,11 +68,12 @@ DEF(push_pop_all_iret, -0xa10540)
 DEF(kernel_pmap_store, 0x2cf0ef8) 
 DEF(crypt_singleton_array, 0x2c35d70) 
 DEF(mov_rax_cr0, -0xa75da1) 
-DEF(mov_cr0_rax, -0xa75d9c) 
 DEF(syscall_cfi_table_jmp_int3, -0xa06998)
 
-/* TODO(FW_PORT): replace all six required zero-delta placeholders. */
-TODO_FPU_CR0_OFFSETS()
+DEF(cr0_load, -0x9C127C)
+DEF(cr0_clear_store, -0x5AE1E5)
+DEF(cr0_write_ret, -0x574553)
+DEF(store_rax_rdi, -0xA7602E)
 
 // non data-relative offsets
 DEF(p_sysent, 0xA00)

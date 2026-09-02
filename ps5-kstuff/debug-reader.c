@@ -150,14 +150,12 @@ static void print_metrics(const struct kstuff_metrics* metrics)
     PRINT_FIELD("cr0_read", metrics->cr0_read_calls);
     PRINT_FIELD("cr0_write", metrics->cr0_write_calls);
     PRINT_FIELD("cr0_read_clear", metrics->cr0_read_clear_calls);
-    PRINT_FIELD("cr0_rc_fallback", metrics->cr0_read_clear_fallbacks);
     PRINT_FIELD("cr0_elided", metrics->cr0_clear_elided_transitions);
     PRINT_FIELD("cr0_ts_clear", metrics->cr0_ts_already_clear);
     PRINT_FIELD("cr0_chain_enter", metrics->cr0_chain_read_clear_calls);
     PRINT_FIELD("cr0_defer_arm", metrics->cr0_deferred_restore_arms);
-    PRINT_FIELD("cr0_defer_fallback", metrics->cr0_deferred_restore_fallbacks);
     PRINT_FIELD("cr0_fast_enter", metrics->cr0_fast_enter_arms);
-    PRINT_FIELD("cr0_fast_fallback", metrics->cr0_fast_enter_fallbacks);
+    PRINT_FIELD("cr0_fast_arm_fail", metrics->cr0_fast_enter_failures);
     PRINT_FIELD("cr0_chain_fail", metrics->cr0_chain_failures);
     PRINT_FIELD("cr0_restore", metrics->cr0_restore_calls);
     PRINT_FIELD("msr_read", metrics->msr_read_calls);

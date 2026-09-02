@@ -4,8 +4,8 @@
 // gadgets by exact disassembly semantics, not by copying an adjacent delta;
 // byte-search all executable segments, inspect the full containing basic
 // block, and verify registers, stack adjustment, and epilogue.  In particular
-// mov_rax_cr0 must begin with "mov rax, cr0" (0f 20 c0), mov_cr0_rax with
-// "mov cr0, rax" (0f 22 c0), and cpu_switch must be the function whose tail
+// mov_rax_cr0 must begin with "mov rax, cr0" (0f 20 c0), and cpu_switch must
+// be the function whose tail
 // restores DR0/1/2/3/6/7.  Add any new common symbol here, then populate it in
 // every firmware header because this file also defines struct offset_table.
 KDATA_OFFSET(allproc)
@@ -73,13 +73,6 @@ KDATA_OFFSET(push_pop_all_iret)
 KDATA_OFFSET(kernel_pmap_store)
 KDATA_OFFSET(crypt_singleton_array)
 KDATA_OFFSET(mov_rax_cr0)
-// TODO(FW_PORT_ALL): remove mov_cr0_rax with the checked legacy CR0 fallback.
-KDATA_OFFSET(mov_cr0_rax)
-// TODO(FW_PORT_ALL): remove these fallback-only entries when runtime fallback
-// is no longer required. cr0_load/cr0_clear_store/cr0_write_ret/store_rax_rdi
-// remain part of the primary chain.
-KDATA_OFFSET(fpusave_capture)
-KDATA_OFFSET(cr0_capture)
 KDATA_OFFSET(cr0_load)
 KDATA_OFFSET(cr0_clear_store)
 KDATA_OFFSET(cr0_write_ret)

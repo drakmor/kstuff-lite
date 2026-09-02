@@ -1555,8 +1555,11 @@ uint64_t r0gdb_find_syscall_cfi_table_jmp_int3_addr(void)
 
     // some fws have a `mov     rax, gs:0` as the first instruction
     // set user gsbase, its not used anyway
-    if (set_user_gsbase(kstack - 0x2000)) {
-        return;
+    if (set_user_gsbase(kstack - 0x2000))
+    {
+        /* IDT3 was already redirected above; restore it on this error path. */
+        kmemcpy((char*)(offsets.idt+16*3), og_idt3, sizeof(og_idt3));
+        return 0;
     }
 	
     struct regs regs;

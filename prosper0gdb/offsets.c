@@ -12,16 +12,12 @@ extern uint64_t kdata_base;
 #define END_FW() }
 
 /*
- * TODO(FW_PORT_ALL): delete this macro and the completeness check below after
- * every firmware table has real values for all six fields.
+ * Keep incomplete tables explicit and reject them in set_offsets().  These
+ * zero deltas are unsupported sentinels, never runtime fallback addresses.
  *
- * Keeps incomplete firmware tables buildable while making the missing
- * fast-path offsets explicit.  A zero delta resolves to kdata_base and is
- * rejected by set_offsets(); it is never exposed to UELF as a fallback.
+ * A zero delta resolves to kdata_base and is rejected before UELF starts.
  */
-#define TODO_FPU_CR0_OFFSETS() \
-    DEF(fpusave_capture, 0) \
-    DEF(cr0_capture, 0) \
+#define UNSUPPORTED_CR0_CHAIN_OFFSETS() \
     DEF(cr0_load, 0) \
     DEF(cr0_clear_store, 0) \
     DEF(cr0_write_ret, 0) \
@@ -33,6 +29,9 @@ extern uint64_t kdata_base;
  * be re-derived from that firmware's executable kernel image and expressed
  * relative to the same kdata anchor passed by elfldr.
  */
+#include "offsets/2_30.h"
+#include "offsets/2_50.h"
+#include "offsets/2_70.h"
 #include "offsets/3_00.h"
 #include "offsets/3_10.h"
 #include "offsets/3_20.h"
@@ -40,7 +39,6 @@ extern uint64_t kdata_base;
 #include "offsets/4_00.h"
 #include "offsets/4_02.h"
 #include "offsets/4_03.h"
-#include "offsets/2_50.h"
 #include "offsets/4_50.h"
 #include "offsets/4_51.h"
 #include "offsets/5_00.h"
@@ -60,8 +58,8 @@ extern uint64_t kdata_base;
 #include "offsets/8_20.h"
 #include "offsets/8_40.h"
 #include "offsets/8_60.h"
-#include "offsets/9_05.h"
 #include "offsets/9_00.h"
+#include "offsets/9_05.h"
 #include "offsets/9_20.h"
 #include "offsets/9_40.h"
 #include "offsets/9_60.h"
@@ -81,7 +79,7 @@ extern uint64_t kdata_base;
 #include "offsets/12_60.h"
 #include "offsets/12_70.h"
 
-#undef TODO_FPU_CR0_OFFSETS
+#undef UNSUPPORTED_CR0_CHAIN_OFFSETS
 
 void* dlsym(void*, const char*);
 
@@ -92,7 +90,9 @@ int set_offsets(void)
     {
 #ifndef NO_BUILTIN_OFFSETS
     /* TODO(FW_PORT): register the new set_offsets_<fw>() table here too. */
+    case 0x230: set_offsets_230(); break;
     case 0x250: set_offsets_250(); break;
+    case 0x270: set_offsets_270(); break;
     case 0x300: set_offsets_300(); break;
     case 0x310: set_offsets_310(); break;
     case 0x320: set_offsets_320(); break;
@@ -144,7 +144,7 @@ int set_offsets(void)
     default: return -1;
     }
 
-    /* TODO(FW_PORT_ALL): remove with all zero-delta table placeholders. */
+    /* Reject any table containing an unsupported zero-delta sentinel. */
 #undef KDATA_OFFSET
 #undef ABSOLUTE_OFFSET
 #define KDATA_OFFSET(x) if(offsets.x == kdata_base) return -1;

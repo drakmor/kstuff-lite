@@ -273,7 +273,7 @@ struct kstuff_metrics
     uint64_t msr_read_calls;
     uint64_t msr_write_calls;
     uint64_t cr0_read_clear_calls;
-    uint64_t cr0_read_clear_fallbacks;
+    uint64_t reserved_cr0_read_clear_slot;
     uint64_t cr0_clear_elided_transitions;
     uint64_t cr0_ts_already_clear;
     uint64_t fpu_exit_failures;
@@ -287,9 +287,9 @@ struct kstuff_metrics
     uint64_t cr0_deferred_restore_arms;
     uint64_t cr0_chain_failures;
     uint64_t cr0_restore_calls;
-    uint64_t cr0_deferred_restore_fallbacks;
+    uint64_t reserved_cr0_restore_slot;
     uint64_t cr0_fast_enter_arms;
-    uint64_t cr0_fast_enter_fallbacks;
+    uint64_t cr0_fast_enter_failures;
     uint64_t fpu_exits;
 
     /* End-to-end and CR0-only FPU transition timings (TSC cycles). */

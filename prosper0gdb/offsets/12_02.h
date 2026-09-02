@@ -68,11 +68,10 @@ DEF(push_pop_all_iret, -0xa37668)
 DEF(kernel_pmap_store, 0x2e1cfb8)
 DEF(crypt_singleton_array, 0x2d61e30)
 DEF(mov_rax_cr0, -0xaa3c61)
-DEF(mov_cr0_rax, -0xaa3c5c)
 DEF(syscall_cfi_table_jmp_int3, -0xA3CB08) //A3CFB0)
 
-/* TODO(FW_PORT): replace all six required zero-delta placeholders. */
-TODO_FPU_CR0_OFFSETS()
+/* TODO(FW_PORT): firmware is unsupported until all four offsets are set. */
+UNSUPPORTED_CR0_CHAIN_OFFSETS()
 
 // non data-relative offsets
 DEF(p_sysent, 0xA08)

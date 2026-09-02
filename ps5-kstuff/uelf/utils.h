@@ -45,10 +45,9 @@ int write_dbgregs_checked(const uint64_t* dr);
 int snapshot_current_dbgregs_checked(struct dbgregs_snapshot* snapshot);
 int install_dbgregs_checked(const uint64_t* dr,
                             const struct dbgregs_snapshot* snapshot);
-/* TODO(FW_PORT_ALL): remove with legacy CR0 fallback. */
-int read_cr0_checked(uint64_t* cr0);
+/* Mandatory fast CR0-entry chain. */
 int read_cr0_clear_ts_checked(uint64_t* cr0);
-/* TODO(FW_PORT_ALL): remove with legacy/deferred-restore CR0 fallback. */
+/* Checked recovery writer using the mandatory CR0 chain gadget. */
 int write_cr0_checked(uint64_t cr0);
 int defer_cr0_restore_checked(uint64_t cr0);
 void start_syscall_with_dbgregs(uint64_t* regs, const uint64_t* dbgregs);
