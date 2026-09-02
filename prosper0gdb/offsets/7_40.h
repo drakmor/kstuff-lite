@@ -71,8 +71,12 @@ DEF(mov_rax_cr0, -0xa12a61)
 DEF(mov_cr0_rax, -0xa12a5c)
 DEF(syscall_cfi_table_jmp_int3, -0x9a6f90)
 
-/* TODO(FW_PORT): replace all six required zero-delta placeholders. */
-TODO_FPU_CR0_OFFSETS()
+DEF(fpusave_capture, -0x54996C)
+DEF(cr0_capture, -0xA1246D)
+DEF(cr0_load, -0x95CF4C)
+DEF(cr0_clear_store, -0x583015)
+DEF(cr0_write_ret, -0x549343)
+DEF(store_rax_rdi, -0xA12CEE)
 
 // non data-relative offsets
 DEF(p_sysent, 0x9F8)
