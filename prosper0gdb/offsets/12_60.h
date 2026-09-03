@@ -68,7 +68,6 @@ DEF(push_pop_all_iret, -0xA377E8)
 DEF(kernel_pmap_store, 0x2e1cfb8)
 DEF(crypt_singleton_array, 0x2d61e30)
 DEF(mov_rax_cr0, -0xAA3DE1)
-DEF(mov_cr0_rax, -0xAA3DDC)
 DEF(syscall_cfi_table_jmp_int3, -0xa3d130)
 
 DEF(cr0_load, -0x9EDA7C)
