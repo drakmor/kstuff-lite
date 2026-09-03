@@ -68,10 +68,13 @@ DEF(push_pop_all_iret, -0xa1e958)
 DEF(kernel_pmap_store, 0x2e04f18)
 DEF(crypt_singleton_array, 0x2d49d70)
 DEF(mov_rax_cr0, -0xa8ac21)
+DEF(mov_cr0_rax, -0xa8ac1c)
 DEF(syscall_cfi_table_jmp_int3, -0xA24250)
 
-/* TODO(FW_PORT): firmware is unsupported until all four offsets are set. */
-UNSUPPORTED_CR0_CHAIN_OFFSETS()
+DEF(cr0_load, -0x9D55AC)
+DEF(cr0_clear_store, -0x5B9813)
+DEF(cr0_write_ret, -0x57F5B3)
+DEF(store_rax_rdi, -0xA8AEAE)
 
 // non data-relative offsets
 DEF(p_sysent, 0xA00)
