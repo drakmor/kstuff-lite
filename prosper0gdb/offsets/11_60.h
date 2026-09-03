@@ -70,8 +70,10 @@ DEF(crypt_singleton_array, 0x2d49d70)
 DEF(mov_rax_cr0, -0xa8b061)
 DEF(syscall_cfi_table_jmp_int3, -0xa246a0)
 
-/* TODO(FW_PORT): firmware is unsupported until all four offsets are set. */
-UNSUPPORTED_CR0_CHAIN_OFFSETS()
+DEF(cr0_load, -0x9D598C)
+DEF(cr0_clear_store, -0x5B9603)
+DEF(cr0_write_ret, -0x57F3A3)
+DEF(store_rax_rdi, -0xA8B2EE)
 
 // non data-relative offsets
 DEF(p_sysent, 0xA00)
