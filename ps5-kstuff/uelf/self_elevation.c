@@ -11,6 +11,7 @@
 #define COREDUMP_AUTH_ID UINT64_C(0x4800000000000006)
 #define DEBUG_AUTH_ID UINT64_C(0x4800000000010003)
 #define MAX_PROCESS_WALK 4096
+#define MAX_PROCESS_WALK_RETRIES 4
 
 extern char allproc[];
 
@@ -22,9 +23,6 @@ struct kernel_layout
     uint16_t ucred_uid;
     uint16_t ucred_ruid;
     uint16_t ucred_svuid;
-    uint16_t ucred_ngroups;
-    uint16_t ucred_rgid;
-    uint16_t ucred_svgid;
     uint16_t ucred_prison;
     uint16_t ucred_auth_id;
     uint16_t ucred_caps;
@@ -34,8 +32,8 @@ struct kernel_layout
 };
 
 static const struct kernel_layout supported_layout = {
-    0x40, 0x48, 0xbc, 0x04, 0x08, 0x0c, 0x10, 0x14, 0x18,
-    0x30, 0x58, 0x60, 0x80, 0x10, 0x18,
+    0x40, 0x48, 0xbc, 0x04, 0x08, 0x0c, 0x30, 0x58, 0x60,
+    0x80, 0x10, 0x18,
 };
 
 struct process_state
@@ -43,9 +41,6 @@ struct process_state
     uint32_t uid;
     uint32_t ruid;
     uint32_t svuid;
-    uint32_t ngroups;
-    uint32_t rgid;
-    uint32_t svgid;
     uint64_t prison;
     uint64_t auth_id;
     uint8_t caps[16];
@@ -57,6 +52,35 @@ struct process_state
 static int is_kernel_pointer(uint64_t pointer)
 {
     return pointer && (pointer >> 48) == UINT64_C(0xffff);
+}
+
+static int state_pointers_sane(const struct process_state* state)
+{
+    return is_kernel_pointer(state->prison)
+        && is_kernel_pointer(state->root_directory)
+        && (!state->jail_directory || is_kernel_pointer(state->jail_directory));
+}
+
+static int root_state_sane(const struct process_state* state)
+{
+    return !state->uid
+        && !state->ruid
+        && !state->svuid
+        && state_pointers_sane(state);
+}
+
+/* Serialize profile mutations made through this interface across CPUs. */
+static volatile uint8_t elevation_busy;
+
+static int lock_elevation(void)
+{
+    return __atomic_test_and_set(&elevation_busy, __ATOMIC_ACQUIRE)
+         ? EBUSY : 0;
+}
+
+static void unlock_elevation(void)
+{
+    __atomic_clear(&elevation_busy, __ATOMIC_RELEASE);
 }
 
 static int firmware_supported(void)
@@ -132,7 +156,8 @@ static int read_process_links(uint64_t process, const struct kernel_layout* layo
     return 0;
 }
 
-static int find_process_one(const struct kernel_layout* layout, uint64_t* process_one)
+static int find_process_one_once(const struct kernel_layout* layout,
+                                 uint64_t* process_one)
 {
     uint64_t process;
     if(copy_u64_from_kernel(&process, (uint64_t)allproc))
@@ -142,19 +167,45 @@ static int find_process_one(const struct kernel_layout* layout, uint64_t* proces
     {
         uint32_t pid;
         uint64_t next;
+        uint64_t next_previous;
         if(!is_kernel_pointer(process)
-        || copy_u32_from_kernel(&pid, process + layout->proc_pid))
+        || copy_u32_from_kernel(&pid, process + layout->proc_pid)
+        || copy_u64_from_kernel(&next, process))
             return EFAULT;
         if(pid == 1)
         {
+            uint32_t confirmed_pid;
+            if(copy_u32_from_kernel(&confirmed_pid,
+                                    process + layout->proc_pid)
+            || confirmed_pid != pid)
+                return EAGAIN;
             *process_one = process;
             return 0;
         }
-        if(copy_u64_from_kernel(&next, process))
-            return EFAULT;
+        if(next)
+        {
+            /* LIST_ENTRY.le_prev must point at process->p_list.le_next. */
+            if(!is_kernel_pointer(next)
+            || copy_u64_from_kernel(&next_previous, next + sizeof(uint64_t))
+            || next_previous != process)
+                return EAGAIN;
+        }
         process = next;
     }
     return ESRCH;
+}
+
+static int find_process_one(const struct kernel_layout* layout,
+                            uint64_t* process_one)
+{
+    int error = EAGAIN;
+    for(unsigned int attempt = 0; attempt < MAX_PROCESS_WALK_RETRIES; attempt++)
+    {
+        error = find_process_one_once(layout, process_one);
+        if(error != EAGAIN)
+            break;
+    }
+    return error;
 }
 
 static int read_state(uint64_t ucred, uint64_t filedesc,
@@ -163,9 +214,6 @@ static int read_state(uint64_t ucred, uint64_t filedesc,
     if(copy_u32_from_kernel(&state->uid, ucred + layout->ucred_uid)
     || copy_u32_from_kernel(&state->ruid, ucred + layout->ucred_ruid)
     || copy_u32_from_kernel(&state->svuid, ucred + layout->ucred_svuid)
-    || copy_u32_from_kernel(&state->ngroups, ucred + layout->ucred_ngroups)
-    || copy_u32_from_kernel(&state->rgid, ucred + layout->ucred_rgid)
-    || copy_u32_from_kernel(&state->svgid, ucred + layout->ucred_svgid)
     || copy_u64_from_kernel(&state->prison, ucred + layout->ucred_prison)
     || copy_u64_from_kernel(&state->auth_id, ucred + layout->ucred_auth_id)
     || copy_from_kernel(state->caps, ucred + layout->ucred_caps, sizeof(state->caps))
@@ -181,19 +229,16 @@ static int write_state(uint64_t ucred, uint64_t filedesc,
                        const struct kernel_layout* layout,
                        const struct process_state* state)
 {
-    if(copy_u32_to_kernel(ucred + layout->ucred_uid, state->uid)
-    || copy_u32_to_kernel(ucred + layout->ucred_ruid, state->ruid)
-    || copy_u32_to_kernel(ucred + layout->ucred_svuid, state->svuid)
-    || copy_u32_to_kernel(ucred + layout->ucred_ngroups, state->ngroups)
-    || copy_u32_to_kernel(ucred + layout->ucred_rgid, state->rgid)
-    || copy_u32_to_kernel(ucred + layout->ucred_svgid, state->svgid)
+    const uint32_t ids[3] = {state->uid, state->ruid, state->svuid};
+    const uint64_t roots[2] = {state->root_directory, state->jail_directory};
+
+    if(copy_to_kernel(ucred + layout->ucred_uid, ids, sizeof(ids))
     || copy_u64_to_kernel(ucred + layout->ucred_prison, state->prison)
     || copy_u64_to_kernel(ucred + layout->ucred_auth_id, state->auth_id)
     || copy_to_kernel(ucred + layout->ucred_caps, state->caps, sizeof(state->caps))
     || copy_to_kernel(ucred + layout->ucred_attributes, state->attributes,
                       sizeof(state->attributes))
-    || copy_u64_to_kernel(filedesc + layout->filedesc_root, state->root_directory)
-    || copy_u64_to_kernel(filedesc + layout->filedesc_jail, state->jail_directory))
+    || copy_to_kernel(filedesc + layout->filedesc_root, roots, sizeof(roots)))
         return EFAULT;
     return 0;
 }
@@ -204,9 +249,6 @@ static int states_equal(const struct process_state* left,
     return left->uid == right->uid
         && left->ruid == right->ruid
         && left->svuid == right->svuid
-        && left->ngroups == right->ngroups
-        && left->rgid == right->rgid
-        && left->svgid == right->svgid
         && left->prison == right->prison
         && left->auth_id == right->auth_id
         && !memcmp(left->caps, right->caps, sizeof(left->caps))
@@ -231,7 +273,6 @@ int inspect_current_process(uint64_t thread, uint64_t magic, uint64_t version,
                             uint64_t selector, uint64_t* value)
 {
     const struct kernel_layout* layout;
-    struct process_state state;
     uint64_t process;
     uint64_t ucred;
     uint64_t filedesc;
@@ -245,10 +286,9 @@ int inspect_current_process(uint64_t thread, uint64_t magic, uint64_t version,
     if(!is_kernel_pointer(thread)
     || copy_u64_from_kernel(&process, thread + td_proc)
     || read_process_links(process, layout, &ucred, &filedesc)
-    || read_state(ucred, filedesc, layout, &state))
+    || copy_u64_from_kernel(value, ucred + layout->ucred_auth_id))
         return EFAULT;
 
-    *value = state.auth_id;
     return 0;
 }
 
@@ -277,27 +317,59 @@ int elevate_current_process(uint64_t thread, uint64_t magic, uint64_t version,
         return EINVAL;
     if(!(layout = select_layout()))
         return EPROTONOSUPPORT;
+    if((error = lock_elevation()))
+        return error;
     if(!is_kernel_pointer(thread)
     || copy_u64_from_kernel(&current_process, thread + td_proc)
     || read_process_links(current_process, layout, &current_ucred, &current_filedesc)
     || copy_u32_from_kernel(&current_pid, current_process + layout->proc_pid)
     || !current_pid)
-        return EFAULT;
+    {
+        error = EFAULT;
+        goto out;
+    }
     if((error = find_process_one(layout, &process_one))
     || (error = read_process_links(process_one, layout, &root_ucred, &root_filedesc))
     || (error = read_state(current_ucred, current_filedesc, layout, &original))
     || (error = read_state(root_ucred, root_filedesc, layout, &root)))
-        return error;
-    if(!is_kernel_pointer(root.prison) || !is_kernel_pointer(root.root_directory))
-        return EFAULT;
+        goto out;
+    {
+        uint64_t checked_ucred;
+        uint64_t checked_filedesc;
+        uint32_t checked_pid;
+        if(read_process_links(current_process, layout, &checked_ucred,
+                              &checked_filedesc)
+        || copy_u32_from_kernel(&checked_pid,
+                                current_process + layout->proc_pid)
+        || checked_ucred != current_ucred
+        || checked_filedesc != current_filedesc
+        || checked_pid != current_pid)
+        {
+            error = EAGAIN;
+            goto out;
+        }
+        if(read_process_links(process_one, layout, &checked_ucred,
+                              &checked_filedesc)
+        || copy_u32_from_kernel(&checked_pid, process_one + layout->proc_pid)
+        || checked_ucred != root_ucred
+        || checked_filedesc != root_filedesc
+        || checked_pid != 1)
+        {
+            error = EAGAIN;
+            goto out;
+        }
+    }
+    if(!state_pointers_sane(&original) || !root_state_sane(&root))
+    {
+        error = EFAULT;
+        goto out;
+    }
 
     target = original;
     target.uid = 0;
     target.ruid = 0;
     target.svuid = 0;
-    target.ngroups = 0;
-    target.rgid = 0;
-    target.svgid = 0;
+    /* Keep the complete group vector intact; UID 0 does not require changing it. */
     target.prison = root.prison;
     if(profile == KSTUFF_PROFILE_PROCESS_MEMORY)
         target.auth_id = COREDUMP_AUTH_ID;
@@ -311,14 +383,26 @@ int elevate_current_process(uint64_t thread, uint64_t magic, uint64_t version,
     target.jail_directory = is_kernel_pointer(root.jail_directory)
                           ? root.jail_directory : root.root_directory;
 
+    /* Do not overwrite a credential/root change made after our snapshot. */
+    if(read_state(current_ucred, current_filedesc, layout, &verified)
+    || !states_equal(&verified, &original))
+    {
+        error = EAGAIN;
+        goto out;
+    }
+
     if(write_state(current_ucred, current_filedesc, layout, &target)
     || read_state(current_ucred, current_filedesc, layout, &verified)
     || !states_equal(&verified, &target))
     {
         error = restore_state(current_ucred, current_filedesc, layout, &original);
-        return error ? error : EFAULT;
+        error = error ? error : EFAULT;
+        goto out;
     }
-    return 0;
+    error = 0;
+out:
+    unlock_elevation();
+    return error;
 }
 
 #endif

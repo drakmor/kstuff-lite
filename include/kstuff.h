@@ -9,12 +9,6 @@
 #error "kstuff client requests require x86-64"
 #endif
 
-#ifdef __cplusplus
-extern "C" int getpid(void);
-#else
-int getpid(void);
-#endif
-
 #define KSTUFF_PROBE_OP UINT32_C(0xffffffff)
 #define KSTUFF_SELF_ELEVATION_OP UINT32_C(7)
 #define KSTUFF_SELF_INSPECTION_OP UINT32_C(8)
@@ -37,7 +31,6 @@ static inline int kstuff_internal_request(uint32_t operation, uint64_t argument0
                                           uint64_t argument1, uint64_t argument2,
                                           uint64_t* result)
 {
-    const uintptr_t syscall_entry = (uintptr_t)(void*)&getpid + 7;
     uint64_t value = ((uint64_t)operation << 32) | UINT64_C(39);
     register uint64_t argument3 __asm__("r10") = 0;
     register uint64_t argument4 __asm__("r8") = 0;
@@ -47,12 +40,19 @@ static inline int kstuff_internal_request(uint32_t operation, uint64_t argument0
     if(!result)
         return EINVAL;
 
-    __asm__ volatile("call *%[entry]\n\tsetc %[failed]"
+    /*
+     * Do not hide a call instruction inside this asm block.  The compiler
+     * may keep live values in the AMD64 red zone because it cannot see that
+     * an inline-asm call writes a return address below RSP.
+     *
+     * Entering the syscall directly also avoids depending on the instruction
+     * layout of a particular libkernel getpid stub.
+     */
+    __asm__ volatile("syscall\n\tsetc %[failed]"
                      : "+a"(value), [failed] "=qm"(failed), "+r"(argument3),
                        "+r"(argument4), "+r"(argument5)
-                     : [entry] "r"(syscall_entry), "D"(argument0), "S"(argument1),
-                       "d"(argument2)
-                     : "rcx", "r11", "memory");
+                     : "D"(argument0), "S"(argument1), "d"(argument2)
+                     : "rcx", "r11", "cc", "memory");
 
     if(failed)
         return value && value <= INT_MAX ? (int)value : EIO;
