@@ -719,7 +719,7 @@ int write_dbgregs_checked(const uint64_t* dr)
      * explicit firmware delta if it is not +0x874; RAX=0 is the completion
      * marker and must remain true at the selected return.
      */
-    const uint64_t tail_delta = FWVER == 0x250 ? 0x704 : 0x874;
+    const uint64_t tail_delta = FWVER <= 0x270 ? 0x704 : 0x874;
     uint64_t regs[NREGS] = {
         [RIP] = (uint64_t)cpu_switch + tail_delta,
         [CS] = 0x20,
